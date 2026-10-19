@@ -25,7 +25,7 @@ Covers the TV and mutes it during commercials in live YouTube TV (and labeled ad
 1. Laptop lid **open**, TV connected.
 2. `python3 server.py` (also keeps the display awake).
 3. Open detector Chrome (command above) on the laptop screen. Tune to the channel, set quality to the lowest, keep the window visible (never minimized).
-4. In the detector Chrome (mode = Reporter), with the YouTube TV tab open and in front, open the extension popup and press **Start capture**. The toolbar badge shows OK when frames are flowing (CLICK means capture isn't running). Redo this if you close the tab.
+4. In the detector Chrome (mode = Reporter), with the YouTube TV tab open and in front, open the extension popup, pick the **Program** from the dropdown (programs you've watched before are listed; choose **New program…** and type a name like `NBC SNF` the first time), then press **Start capture** (the button hides while capture is running and comes back if it stops; pressing it never relearns the logo). A program you've watched before loads its saved logo instantly; a new one learns it in the first ~90 s of normal play. The toolbar badge shows OK when frames are flowing (CLICK means capture isn't running). Redo this if you close the tab.
 5. TV Chrome on the TV: same channel. Open the extension popup and press **Start** (the badge shows ON; until then the TV Chrome never contacts the server). Fullscreen, **pause ~5 min** to build the lead, then play. Don't hit "Live".
 6. Check the Terminal status line: `detector ✓  tv ✓  lead 4:xx`.
 
@@ -38,6 +38,15 @@ Change channels on the TV only; the detector follows.
 - **Manual cover:** popup buttons **Cover now** / **Uncover now** (TV Chrome), or click the video and press Option+Shift+K. Both work without the server. The shortcut only works when the TV page has keyboard focus, so the buttons are more reliable. **Uncover now** during a detected break dismisses that break for good; during a labeled ad it stays off until that ad's label goes away. In fullscreen, move the mouse to the top of the TV screen to reach the toolbar.
 - **Diagnostics:** Option+Shift+D prints ad-looking page elements to the console.
 - **Detector debug page:** open from the detector Chrome's popup. Shows the crop, the learned logo mask, the live score, and a **Relearn** button.
+
+## Overlay and trivia
+
+- The cover closes like a curtain over 5 s and opens again so the game is fully back exactly when the break ends (it starts opening 5 s early; the sound comes back at the end). If something goes wrong (server stopped, Stop, Uncover now) it opens in under a second.
+- While covered it shows trivia from **`trivia.json`** (next to `server.py`): a question, then the answer 15 s later, a new one every 30 s. Edit the file any time, no restart needed. Format: `[{"q": "Question?", "a": "Answer"}, {"q": "Open-ended question?"}]` (leave out `"a"` for questions with no right answer).
+
+## Logo templates
+
+Learned logos are saved per program in **`templates/`** next to `server.py` (one `.json` file each), so next week's game doesn't relearn. Same channel, different show (e.g. NBC's SNF logo vs the regular peacock) = pick a different program name. Delete a file there, or press **Relearn** on the debug page, to start that program over.
 
 ## Reviewing detection (log-only)
 

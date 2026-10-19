@@ -16,6 +16,8 @@ import atexit
 import json
 import math
 import os
+import random
+import re
 import shutil
 import signal
 import subprocess
@@ -31,6 +33,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BREAKS_FILE = os.path.join(HERE, 'breaks.json')
 CONFIG_FILE = os.path.join(HERE, 'config.json')   # optional: {"offset_s": {"<channel>": 0.0}}
 LOGS_DIR = os.path.join(HERE, 'logs')
+TRIVIA_FILE = os.path.join(HERE, 'trivia.json')       # [{"q": ..., "a": ...}, {"q": ...}]
+TEMPLATES_DIR = os.path.join(HERE, 'templates')       # learned logo masks, one file per program
 
 ALIVE_S = 10          # detector report this recent counts as alive (/tv/sync)
 HEARTBEAT_S = 3       # status line marks a part x when older than this
@@ -38,7 +42,7 @@ KEEP_S = 6 * 3600     # drop breaks starting more than this far behind the newes
 OPEN_MAX_S = 240      # discard an open break once the detector is this far past its start
 SYNC_WINDOW_S = 60    # /tv/sync leaves out breaks that ended this long before the TV's ref
 STATUS_EVERY_S = 5
-MAX_BODY = 64 * 1024
+MAX_BODY = 256 * 1024   # a logo template is up to ~50 KB of JSON
 
 
 def fnum(x):
@@ -59,6 +63,100 @@ def hms(sec):
     sign = '-' if sec < 0 else ''
     sec = int(round(abs(sec)))
     return f'{sign}{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}'
+
+
+def trivia_item():
+    """A random {question, answer} from trivia.json. answer is None for open-ended
+    questions. Re-read every call so the file can be edited while running; any
+    problem (missing file, bad JSON, bad entries) just means no question."""
+    try:
+        with open(TRIVIA_FILE) as f:
+            items = json.load(f)
+    except (OSError, ValueError):
+        return {'ok': True, 'question': None, 'answer': None}
+    good = [i for i in items if isinstance(i, dict) and isinstance(i.get('q'), str) and i['q'].strip()] \
+        if isinstance(items, list) else []
+    if not good:
+        return {'ok': True, 'question': None, 'answer': None}
+    i = random.choice(good)
+    a = i.get('a')
+    return {'ok': True, 'question': i['q'].strip(),
+            'answer': a.strip() if isinstance(a, str) and a.strip() else None}
+
+
+def template_path(name):
+    """File for a program's template, or None if the name is unusable."""
+    if not isinstance(name, str):
+        return None
+    slug = re.sub(r'[^A-Za-z0-9_.-]+', '_', name.strip())[:80].strip('._')
+    return os.path.join(TEMPLATES_DIR, slug + '.json') if slug else None
+
+
+def valid_template(t):
+    try:
+        return (isinstance(t, dict) and t['corner'] in (0, 1, 2, 3)
+                and all(isinstance(t[k], int) and t[k] > 0 for k in ('w', 'h', 'cropW', 'cropH'))
+                and isinstance(t['mask'], list) and 0 < len(t['mask']) <= t['w'] * t['h']
+                and all(isinstance(i, int) and 0 <= i < t['w'] * t['h'] for i in t['mask'])
+                and fnum(t['baseline']) is not None)
+    except (KeyError, TypeError):
+        return False
+
+
+def get_template(name):
+    p = template_path(name)
+    if not p:
+        return {'ok': False, 'error': 'bad name'}
+    try:
+        with open(p) as f:
+            return {'ok': True, 'template': json.load(f).get('template')}
+    except OSError:
+        return {'ok': True, 'template': None}       # none saved yet
+    except ValueError:
+        return {'ok': False, 'error': 'unreadable template file'}
+
+
+def put_template(d):
+    """Save (or, with template null, delete) the logo template for a program."""
+    name, t = d.get('name'), d.get('template')
+    p = template_path(name)
+    if not p:
+        return {'ok': False, 'error': 'bad name'}
+    if t is None:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+        print(f'[template] removed "{name}"')
+        return {'ok': True}
+    if not valid_template(t):
+        return {'ok': False, 'error': 'bad template'}
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+    tmp = p + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump({'name': name.strip(), 'saved_at': time.time(), 'template': t}, f)
+    os.replace(tmp, p)
+    print(f'[template] saved "{name}" (corner {t["corner"]}, {len(t["mask"])} px)')
+    return {'ok': True}
+
+
+def list_templates():
+    out = []
+    try:
+        files = sorted(os.listdir(TEMPLATES_DIR))
+    except OSError:
+        files = []
+    for fn in files:
+        if not fn.endswith('.json'):
+            continue
+        try:
+            with open(os.path.join(TEMPLATES_DIR, fn)) as f:
+                d = json.load(f)
+            out.append({'name': d['name'], 'saved_at': d.get('saved_at'),
+                        'corner': d['template']['corner'], 'pixels': len(d['template']['mask'])})
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return {'ok': True, 'templates': out}
 
 
 class State:
@@ -325,6 +423,12 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == '/health':
             self._send({'ok': True})
+        elif u.path == '/trivia':
+            self._send(trivia_item())
+        elif u.path == '/templates':
+            self._send(list_templates())
+        elif u.path == '/template':
+            self._send(get_template(parse_qs(u.query).get('name', [''])[0]))
         elif u.path == '/tv/sync':
             self._send(self.state.tv_sync(parse_qs(u.query)))
         else:
@@ -347,6 +451,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(self.state.detector_break(data))
         elif path == '/detector/trace':
             self._send(self.state.trace(data))
+        elif path == '/template':
+            self._send(put_template(data))
         else:
             self._send({'ok': False, 'error': 'not found'}, 404)
 

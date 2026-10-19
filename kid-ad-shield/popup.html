@@ -50,6 +50,15 @@
     <div class="help" id="coverState"></div>
   </div>
   <div class="field" id="capture" hidden>
+    <div style="margin-bottom:12px">
+      Program
+      <select id="program"></select>
+      <div id="newProgramRow" hidden style="margin-top:6px">
+        <input type="text" id="newProgram" maxlength="60" placeholder="Name, e.g. NBC SNF">
+        <button id="useNewProgram" style="margin-top:6px">Use new program</button>
+      </div>
+      <div class="help" id="programNote"></div>
+    </div>
     <button id="startCapture">Start capture</button>
     <button id="openDebug">Detector debug</button>
     <div class="help" id="captureNote"></div>

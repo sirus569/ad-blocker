@@ -137,18 +137,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       post('/detector/trace', { channel: msg.channel, thr: msg.thr, baseline: msg.baseline, rows: msg.rows });
       return false;
 
-    // Learned logos are stored here because offscreen documents have no chrome.storage.
-    case 'logo-get':
-      chrome.storage.local.get(msg.key).then((r) => sendResponse({ ok: true, logo: r[msg.key] || null }))
+    // Logo templates live on server.py, one per program (see offscreen.js).
+    case 'template-get':
+      call(`/template?name=${encodeURIComponent(msg.name)}`).then(sendResponse);
+      return true;
+    case 'template-set':
+      post('/template', { name: msg.name, template: msg.template }).then(sendResponse);
+      return true;
+    case 'template-delete':
+      post('/template', { name: msg.name, template: null }).then(sendResponse);
+      return true;
+    case 'list-templates': // popup's program list
+      call('/templates').then(sendResponse);
+      return true;
+
+    // The program being watched (detector Chrome). Kept here because the offscreen
+    // document has no chrome.storage; it is told about changes.
+    case 'get-program':
+      chrome.storage.local.get('program').then((r) => sendResponse({ ok: true, program: r.program || '' }))
         .catch(() => sendResponse({ ok: false }));
       return true;
-    case 'logo-set':
-      chrome.storage.local.set({ [msg.key]: msg.logo }).then(() => sendResponse({ ok: true }))
+    case 'set-program':
+      chrome.storage.local.set({ program: msg.name || '' })
+        .then(() => chrome.runtime.sendMessage({ type: 'program', name: msg.name || '' }).catch(() => {}))
+        .then(() => sendResponse({ ok: true }))
         .catch(() => sendResponse({ ok: false }));
       return true;
-    case 'logo-remove':
-      chrome.storage.local.remove(msg.key).then(() => sendResponse({ ok: true }))
-        .catch(() => sendResponse({ ok: false }));
+
+    case 'trivia': // TV overlay
+      call('/trivia').then(sendResponse);
       return true;
 
     case 'capture-ended': // from the offscreen document

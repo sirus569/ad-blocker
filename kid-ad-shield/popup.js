@@ -65,7 +65,7 @@ function showMode(m) {
   capture.hidden = m !== 'reporter';
   coverCtl.hidden = m !== 'cover';
   if (m === 'cover') refreshCoverState();
-  if (m === 'reporter') refreshCapture();
+  if (m === 'reporter') { refreshCapture(); loadPrograms(); }
 }
 
 // What the last report to the server looked like, to explain a server-side "detector x".
@@ -86,9 +86,82 @@ function reportLine(r) {
     ` (offscreen fresh ${r.fresh}, ok ${r.capOk}, ref ${r.hasRef ? 'yes' : 'NO'}, tab ${r.tabId} vs captured ${r.captureTabId})`;
 }
 
+// Detector Chrome only: which program is on, so the right saved logo is used.
+// A dropdown of the programs that have saved logos, plus "New program..." for the
+// first time you watch something.
+const programSel = document.getElementById('program');
+const newProgramRow = document.getElementById('newProgramRow');
+const newProgramIn = document.getElementById('newProgram');
+const programNote = document.getElementById('programNote');
+const NEW = '__new__';
+let templates = [];
+let currentProgram = '';
+
+function noteProgram(current) {
+  if (templates === null) { programNote.textContent = "Can't reach server.py: start it, then reopen this popup."; return; }
+  if (!current) { programNote.textContent = 'No program chosen: the logo is saved per channel.'; return; }
+  const t = templates.find((x) => x.name === current);
+  programNote.textContent = t
+    ? `Using the saved logo for "${current}" (saved ${new Date(t.saved_at * 1000).toLocaleDateString()}).`
+    : `No saved logo for "${current}" yet: it will learn one in the first ~90 s of normal play.`;
+}
+
+const option = (value, text) => Object.assign(document.createElement('option'), { value, textContent: text });
+
+function fillPrograms() {
+  const names = (templates || []).map((t) => t.name).sort((a, b) => a.localeCompare(b));
+  const opts = [option('', 'None (save the logo per channel)'), ...names.map((n) => option(n, n))];
+  // A program chosen but not learned yet isn't on the server's list: keep it selectable.
+  if (currentProgram && !names.includes(currentProgram)) opts.push(option(currentProgram, `${currentProgram} (not learned yet)`));
+  opts.push(option(NEW, 'New program...'));
+  programSel.replaceChildren(...opts);
+  programSel.value = currentProgram;
+  newProgramRow.hidden = true;
+  noteProgram(currentProgram);
+}
+
+function loadPrograms() {
+  chrome.runtime.sendMessage({ type: 'list-templates' }, (r) => {
+    templates = r && r.ok ? r.templates.filter((t) => !t.name.startsWith('channel ')) : null;
+    chrome.runtime.sendMessage({ type: 'get-program' }, (p) => {
+      currentProgram = (p && p.program) || '';
+      fillPrograms();
+    });
+  });
+}
+
+function useProgram(name) {
+  currentProgram = name;
+  chrome.runtime.sendMessage({ type: 'set-program', name }, () => fillPrograms());
+}
+
+programSel.addEventListener('change', () => {
+  if (programSel.value === NEW) {
+    newProgramRow.hidden = false;
+    programNote.textContent = 'Type a name for the program, e.g. "NBC SNF".';
+    newProgramIn.focus();
+  } else {
+    useProgram(programSel.value);
+  }
+});
+
+document.getElementById('useNewProgram').addEventListener('click', () => {
+  const name = newProgramIn.value.trim();
+  if (!name) { programNote.textContent = 'Type a name first.'; return; }
+  // Same name in different capitals ("nbc snf" vs "NBC SNF"): use the saved one.
+  const existing = (templates || []).find((t) => t.name.toLowerCase() === name.toLowerCase());
+  newProgramIn.value = '';
+  useProgram(existing ? existing.name : name);
+});
+newProgramIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('useNewProgram').click(); });
+
 // Detector Chrome only: what the capture is doing right now.
 function refreshCapture() {
   chrome.runtime.sendMessage({ type: 'capture-status' }, (s) => {
+    // Start capture is only needed when no capture is running (first start, or
+    // after the tab was closed). Pressing it again never relearns the logo.
+    const running = !chrome.runtime.lastError && !!s && s.fresh && !!s.diag && s.diag.live;
+    startCapture.hidden = running;
     if (chrome.runtime.lastError || !s) { captureNote.textContent = 'Capture not started.'; return; }
     if (!s.fresh) { captureNote.textContent = 'Capture not running. Open the YouTube TV tab here and press Start capture.'; return; }
     const d = s.diag || {};

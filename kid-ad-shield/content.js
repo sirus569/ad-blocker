@@ -158,19 +158,48 @@
   }
 
   // ---------- overlay ----------
+  // Two curtain halves slide in from the sides and slide apart again. Opening for
+  // a cover whose end is known starts CURTAIN_S early, so the picture is fully back
+  // at the same moment an instant cut would have shown it (never later). Sound is
+  // only unmuted at that moment. Unplanned uncovers (server down, Stop, Uncover
+  // now) open quickly.
+
+  const CURTAIN_S = 5;        // curtain closing, and planned opening, in seconds
+  const QUICK_OPEN_S = 0.6;   // opening when the uncover was not planned
+  const TRIVIA_EVERY_S = 30;  // a new trivia question this often while covered
+  const ANSWER_AFTER_S = 15;  // reveal the answer this long after the question
 
   const OVERLAY_CSS = `
     :host { all: initial; }
     .scene {
       position: fixed; inset: 0; z-index: 2147483647;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 3vh;
-      background: radial-gradient(ellipse at 50% 120%, #2B3A78 0%, #1B2552 55%, #121A3B 100%);
+      overflow: hidden; cursor: default;
       color: #F7F3D6;
       font-family: ui-rounded, "SF Pro Rounded", "Nunito", "Varela Round", "Trebuchet MS", system-ui, sans-serif;
-      overflow: hidden;
-      cursor: default;
+      --dur: 5s; --cdelay: 4s;
     }
+    .curtain {
+      position: absolute; top: 0; bottom: 0; width: 50.5%;
+      /* soft vertical folds over the night-sky gradient; each half shows its half of it */
+      background:
+        repeating-linear-gradient(90deg, rgba(0,0,0,0.10) 0 2.5vmin, rgba(255,255,255,0.03) 2.5vmin 5vmin),
+        radial-gradient(ellipse at 50% 120%, #2B3A78 0%, #1B2552 55%, #121A3B 100%);
+      background-size: auto, 200% 100%;
+      transition: transform var(--dur) ease-in-out;
+    }
+    .curtain.left  { left: 0;  transform: translateX(-101%); background-position: 0 0, 0 0;
+                     box-shadow: inset -1.2vmin 0 2vmin rgba(0,0,0,0.35); }
+    .curtain.right { right: 0; transform: translateX(101%);  background-position: 0 0, 100% 0;
+                     box-shadow: inset 1.2vmin 0 2vmin rgba(0,0,0,0.35); }
+    .scene.closed .curtain { transform: translateX(0); }
+    .content {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 3vh;
+      opacity: 0; transition: opacity 0.4s ease;
+    }
+    /* text appears once the curtain has (nearly) met in the middle */
+    .scene.closed .content { opacity: 1; transition: opacity 1s ease var(--cdelay); }
     .moon {
       width: 22vmin; height: 22vmin; border-radius: 50%;
       background: #FFE9A8;
@@ -202,6 +231,10 @@
       font-variant-numeric: tabular-nums;
     }
     .count:empty { display: none; }
+    .trivia { max-width: 70vw; text-align: center; margin-top: 1vh; }
+    .tq { font-size: clamp(18px, 3.4vmin, 44px); font-weight: 600; line-height: 1.3; }
+    .tq:empty { display: none; }
+    .ta { font-size: clamp(16px, 3vmin, 40px); color: #FFE9A8; margin-top: 1.2vh; min-height: 1.3em; }
     @keyframes breathe {
       0%, 100% { transform: scale(1); }
       50% { transform: scale(1.05); }
@@ -215,6 +248,10 @@
     [12, 18], [22, 70], [35, 12], [48, 82], [63, 22],
     [72, 64], [84, 15], [90, 78], [8, 52], [56, 48],
   ];
+
+  let opening = false;        // curtain is opening; the overlay is removed when done
+  let openEndsAt = 0;         // when the opening finishes (ms, performance.now)
+  let openTimer = null;
 
   function overlayParent() {
     const fs = document.fullscreenElement;
@@ -234,13 +271,19 @@
 
     const scene = document.createElement('div');
     scene.className = 'scene';
+    const left = document.createElement('div');
+    left.className = 'curtain left';
+    const right = document.createElement('div');
+    right.className = 'curtain right';
+    const content = document.createElement('div');
+    content.className = 'content';
 
-    for (const [top, left] of STARS) {
+    for (const [top, l] of STARS) {
       const s = document.createElement('div');
       s.className = 'star';
       s.style.top = `${top}%`;
-      s.style.left = `${left}%`;
-      scene.appendChild(s);
+      s.style.left = `${l}%`;
+      content.appendChild(s);
     }
 
     const moon = document.createElement('div');
@@ -257,8 +300,69 @@
     const count = document.createElement('div');
     count.className = 'count'; // "Back in 1:23" during a known break
 
-    scene.append(moon, msg, sub, count);
+    const trivia = document.createElement('div');
+    trivia.className = 'trivia';
+    const tq = document.createElement('div');
+    tq.className = 'tq';
+    const ta = document.createElement('div');
+    ta.className = 'ta';
+    trivia.append(tq, ta);
+
+    content.append(moon, msg, sub, count, trivia);
+    scene.append(left, right, content);
     root.append(style, scene);
+  }
+
+  const sceneEl = () => host && host.shadowRoot.querySelector('.scene');
+
+  function setDur(scene, s) {
+    scene.style.setProperty('--dur', `${s}s`);
+    scene.style.setProperty('--cdelay', `${Math.max(0, s - 1)}s`);
+  }
+
+  // Close the curtain (or keep it closed). Called every tick while covered.
+  function showOverlay() {
+    if (!host) buildOverlay();
+    const parent = overlayParent();
+    if (host.parentNode !== parent) parent.appendChild(host);
+    if (openTimer) { clearTimeout(openTimer); openTimer = null; }
+    opening = false;
+    const scene = sceneEl();
+    if (!scene.classList.contains('closed')) {
+      setDur(scene, CURTAIN_S);
+      void scene.offsetWidth; // apply the open position first so the slide-in runs
+      scene.classList.add('closed');
+    }
+  }
+
+  // Open the curtain over `s` seconds, then remove the overlay. A later call can
+  // only make the opening finish sooner, never later.
+  function openOverlay(s) {
+    if (!host || !host.parentNode) return;
+    const scene = sceneEl();
+    const now = performance.now();
+    if (scene.classList.contains('closed')) {
+      setDur(scene, s);
+      scene.classList.remove('closed');
+      openEndsAt = now + s * 1000;
+    } else {
+      openEndsAt = opening ? Math.min(openEndsAt, now + s * 1000) : now + s * 1000;
+    }
+    opening = true;
+    if (openTimer) clearTimeout(openTimer);
+    openTimer = setTimeout(() => { openTimer = null; if (opening) hideOverlayNow(); },
+      Math.max(0, openEndsAt - now) + 100);
+  }
+
+  function hideOverlayNow() {
+    opening = false;
+    if (host && host.parentNode) host.parentNode.removeChild(host);
+  }
+
+  function updateMessage() {
+    if (!host) return;
+    const msg = host.shadowRoot.querySelector('.msg');
+    if (msg) msg.textContent = settings.message || DEFAULTS.message;
   }
 
   function setCountdown(text) {
@@ -272,31 +376,52 @@
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   };
 
-  // Text for the countdown while covering for break `b`. Exact when the break's
-  // end is known; "Back soon" while it is still open. Never longer than the
-  // MAX_COVER_S cap, since the cover lifts then anyway.
-  function breakCountdown(b) {
-    if (b.end == null) return 'Back soon';
-    const ref = currentRef();
-    if (ref == null) return 'Back soon';
+  // Seconds until the cover for break `b` will lift: the break's known end, or
+  // the MAX_COVER_S cap, whichever comes first. Without a known end only the cap
+  // is certain.
+  function secondsUntilUncover(b) {
     const capLeft = MAX_COVER_S - (performance.now() - breakCoverStart) / 1000;
-    return `Back in ${mmss(Math.min(b.end - END_EARLY - ref, capLeft))}`;
+    const ref = currentRef();
+    if (b.end == null || ref == null) return capLeft;
+    return Math.min(b.end - END_EARLY - ref, capLeft);
   }
 
-  function showOverlay() {
-    if (!host) buildOverlay();
-    const parent = overlayParent();
-    if (host.parentNode !== parent) parent.appendChild(host);
+  // Countdown text: exact when the end is known, "Back soon" while it is open.
+  function breakCountdown(b) {
+    if (b.end == null || currentRef() == null) return 'Back soon';
+    return `Back in ${mmss(secondsUntilUncover(b))}`;
   }
 
-  function hideOverlay() {
-    if (host && host.parentNode) host.parentNode.removeChild(host);
+  // ---------- trivia (from server.py's /trivia; some questions have no answer) ----------
+
+  let trivia = null;          // {q, a, at} on screen; q null = server had none
+  let triviaPending = false;
+
+  function fetchTrivia() {
+    if (triviaPending) return;
+    triviaPending = true;
+    sendToBackground({ type: 'trivia' }, (r) => {
+      triviaPending = false;
+      trivia = { q: r && r.ok && r.question ? r.question : null, a: (r && r.answer) || null, at: performance.now() };
+      renderTrivia();
+    });
   }
 
-  function updateMessage() {
+  function renderTrivia() {
     if (!host) return;
-    const msg = host.shadowRoot.querySelector('.msg');
-    if (msg) msg.textContent = settings.message || DEFAULTS.message;
+    const q = host.shadowRoot.querySelector('.tq');
+    const a = host.shadowRoot.querySelector('.ta');
+    const shown = trivia && trivia.q;
+    const reveal = shown && performance.now() - trivia.at >= ANSWER_AFTER_S * 1000;
+    const qText = shown ? trivia.q : '';
+    const aText = !reveal ? '' : trivia.a ? `Answer: ${trivia.a}` : 'No right answer. Talk it over!';
+    if (q.textContent !== qText) q.textContent = qText;
+    if (a.textContent !== aText) a.textContent = aText;
+  }
+
+  function updateTrivia() {
+    if (!trivia || performance.now() - trivia.at >= TRIVIA_EVERY_S * 1000) fetchTrivia();
+    renderTrivia();
   }
 
   // ---------- server and probe ----------
@@ -440,8 +565,9 @@
     covered = false;
     coveredByLabelOnly = false;
     clearCount = 0;
-    hideOverlay();
+    openOverlay(QUICK_OPEN_S); // a planned opening already under way finishes on its own schedule
     unmuteAll();
+    trivia = null;             // a fresh question next time
     log('Ad finished, showing the program again.');
   }
 
@@ -458,6 +584,7 @@
     let kind = null;    // 'hard' (manual/break: no hysteresis) or 'label'
     let reason = null;
     let countdown = ''; // only for break covers
+    let planned = null; // seconds until a break cover will lift (end known or cap)
 
     if (manual) {
       kind = 'hard'; reason = 'manual toggle'; // works even with the server down
@@ -475,6 +602,7 @@
       if (hit) {
         kind = 'hard'; reason = `break ${hit.id}`;
         countdown = breakCountdown(hit);
+        planned = secondsUntilUncover(hit);
       } else {
         breakCoverId = null;
         const label = detectAd();
@@ -488,8 +616,18 @@
     if (kind) {
       clearCount = 0;
       coveredByLabelOnly = kind === 'label';
-      cover(reason);
+      if (planned != null && planned <= CURTAIN_S) {
+        // About to lift: open the curtain now so the picture is fully back at the
+        // moment we uncover. Sound stays off until then.
+        if (!covered) { covered = true; log('Covering (curtain already opening). Trigger:', reason); }
+        coverReason = reason;
+        muteAll();
+        if (!opening) openOverlay(Math.max(planned, 0.1));
+      } else {
+        cover(reason);
+      }
       setCountdown(countdown);
+      updateTrivia();
     } else if (covered) {
       // Labels flicker, so they get a short grace period. Breaks and a dead
       // server uncover immediately.
@@ -598,7 +736,8 @@
   });
 
   document.addEventListener('fullscreenchange', () => {
-    if (covered) showOverlay(); // move the overlay in or out of the fullscreen element
+    // move the overlay in or out of the fullscreen element, keeping the curtain's state
+    if (host && host.parentNode) { const p = overlayParent(); if (host.parentNode !== p) p.appendChild(host); }
   });
 
   // ---------- settings ----------

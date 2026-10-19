@@ -69,6 +69,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'capture-start') start(msg.streamId);
   else if (msg.type === 'probe') probe = { ...msg.probe, recv: performance.now() };
   else if (msg.type === 'relearn') relearn();
+  else if (msg.type === 'program') program = msg.name || '';
   else if (msg.type === 'debug-snapshot') { sendResponse(snapshot()); return false; }
   return false;
 });
@@ -178,36 +179,56 @@ function frameSd(rgba) {
 
 // ---------- logo learning ----------
 
-// v2: masks are learned on the picture's own corners. v1 masks (learned on the whole
-// <video> element, black bars included) are ignored.
-const logoKey = (ch) => `logo2:${ch}`;
+// Logos are saved as templates on server.py, one per PROGRAM (e.g. "NBC SNF"):
+// the same channel shows different logos for different programs, and a program's
+// logo is the same week to week. With no program chosen, the template is per channel.
+let program = '';              // chosen in the popup
+let templateName = '';         // template currently loaded / being learned
 
-async function setChannel(ch) {
+const wantedTemplate = () => (program ? program : `channel ${channel}`);
+
+chrome.runtime.sendMessage({ type: 'get-program' })
+  .then((r) => { if (r && r.ok) program = r.program || ''; })
+  .catch(() => {});
+
+function setChannel(ch) {
   endSegment('channel change');
   channel = ch;
+}
+
+// Load the template for `name` from the server. While loading (or if the server
+// can't be asked) nothing is learned or detected: learning while the server is
+// unreachable could overwrite a good template later.
+async function loadTemplate(name) {
+  endSegment('template change');
+  templateName = name;
   logo = null; learn = null; logoState = 'learning'; loading = true;
-  const key = logoKey(ch);
-  let stored = null;
-  try {
-    const r = await chrome.runtime.sendMessage({ type: 'logo-get', key });
-    stored = r && r.logo;
-  } catch (_) { /* treat as none stored */ }
-  if (channel !== ch) return;
+  let r = null;
+  try { r = await chrome.runtime.sendMessage({ type: 'template-get', name }); } catch (_) { /* below */ }
+  if (templateName !== name) return;
+  if (!r || !r.ok) {
+    logoState = 'none';
+    console.log('[Kid Ad Shield] could not ask the server for template', name, '- retrying');
+    setTimeout(() => { if (templateName === name && loading) loadTemplate(name); }, 5000);
+    return;
+  }
   loading = false;
-  if (stored) {
-    logo = stored;
+  if (r.template) {
+    logo = r.template;
     logoState = 'ok';
     traceThr = logo.baseline * PRESENT_FRAC; traceBase = logo.baseline;
-    console.log('[Kid Ad Shield] loaded stored logo for', ch);
+    console.log('[Kid Ad Shield] loaded template', name);
+  } else {
+    console.log('[Kid Ad Shield] no template for', name, '- learning');
   }
 }
 
 function relearn() {
-  if (!channel) return;
-  chrome.runtime.sendMessage({ type: 'logo-remove', key: logoKey(channel) }).catch(() => {});
+  if (!templateName) return;
+  chrome.runtime.sendMessage({ type: 'template-delete', name: templateName }).catch(() => {});
   endSegment('relearn');
   logo = null; learn = null; logoState = 'learning';
-  console.log('[Kid Ad Shield] relearning logo for', channel);
+  console.log('[Kid Ad Shield] relearning template', templateName);
 }
 
 function learnFrame(rgba, cw, ch, refAt) {
@@ -252,8 +273,8 @@ function finishLearning() {
              mask: best.mask, baseline: best.baseline };
     logoState = 'ok';
     traceThr = logo.baseline * PRESENT_FRAC; traceBase = logo.baseline;
-    chrome.runtime.sendMessage({ type: 'logo-set', key: logoKey(channel), logo }).catch(() => {});
-    console.log('[Kid Ad Shield] learned logo for', channel, 'corner', best.corner,
+    chrome.runtime.sendMessage({ type: 'template-set', name: templateName, template: logo }).catch(() => {});
+    console.log('[Kid Ad Shield] learned template', templateName, 'corner', best.corner,
       'pixels', best.mask.length, 'baseline', best.baseline.toFixed(2));
   }
   learn = null;
@@ -267,7 +288,9 @@ function processFrame() {
   if (!probe || probe.ref == null || now - probe.recv > PROBE_STALE_MS || !probe.rect || !probe.innerW) return;
   if (probe.paused) { lastRef = lastWall = null; return; } // frozen picture proves nothing
   if (probe.channel && probe.channel !== channel) { setChannel(probe.channel); return; }
-  if (loading || !channel) return;
+  if (!channel) return;
+  if (wantedTemplate() !== templateName) { loadTemplate(wantedTemplate()); return; }
+  if (loading) return;
 
   const wall = Date.now() / 1000;
   const refAt = probe.ref + (wall - probe.wall);
@@ -417,7 +440,7 @@ function flushTrace() {
 
 function snapshot() {
   const out = {
-    channel, logoState, loading, score: lastScore, present: lastPresent,
+    channel, program, templateName, logoState, loading, score: lastScore, present: lastPresent,
     thr: logo ? logo.baseline * PRESENT_FRAC : null, baseline: logo ? logo.baseline : null,
     inBreak: !!cur, absentRun, presentRun, history, lastRef,
     sizeMismatch, geo,

@@ -40,7 +40,8 @@ async function tick() {
   if (!s) { info.textContent = 'No detector running. In the detector Chrome, open the YouTube TV tab, set Mode = Reporter, press Start capture.'; return; }
   if (s.frame) draw(s);
   const lines = [
-    `channel: ${s.channel || '-'}    logo state: ${s.logoState}${s.loading ? ' (loading)' : ''}`,
+    `channel: ${s.channel || '-'}    program: ${s.program || '(none: per channel)'}    template: ${s.templateName || '-'}`,
+    `logo state: ${s.logoState}${s.loading ? ' (loading from server)' : ''}`,
     s.learnProgress != null ? `learning: ${Math.round(s.learnProgress * 100)}% (needs about 90 s of normal play, no commercial)` : null,
     s.baseline != null ? `baseline ${s.baseline.toFixed(2)}   threshold ${s.thr.toFixed(2)}   score now ${s.score == null ? '-' : s.score.toFixed(2)}   ${s.present == null ? '' : (s.present ? 'LOGO PRESENT' : 'LOGO ABSENT')}` : null,
     s.logoState === 'ok' ? `in break: ${s.inBreak}   absent run ${s.absentRun}s (opens at 15)   present run ${s.presentRun}s (closes at 3)` : null,
