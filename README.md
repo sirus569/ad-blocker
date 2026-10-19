@@ -48,6 +48,18 @@ Change channels on the TV only; the detector follows.
 
 Learned logos are saved per program in **`templates/`** next to `server.py` (one `.json` file each), so next week's game doesn't relearn. Same channel, different show (e.g. NBC's SNF logo vs the regular peacock) = pick a different program name. Delete a file there, or press **Relearn** on the debug page, to start that program over.
 
+## Reviewing breaks (the review page)
+
+Open **http://127.0.0.1:8787/review** while `server.py` is running.
+
+- Pick the **program** (the names from the detector's Program dropdown) and the **airing** (one showing on one date).
+- **Program started at:** set this once to the real start of the program (broadcast clock). Every time on the page is then counted from it (`1:05:03` = 1 h 5 min 3 s into the program), so it lines up with a recording that starts when the program starts. Until you set it, it's a guess: the first moment the detector saw (or `--program-start`).
+- For each break, mark the **start** and the **end** separately as *OK*, *Too early* or *Too late*, plus how many seconds. Click **What the marks mean** on the page for which way is which.
+- **Merge with next** joins two breaks that were really one (the detector split it and the ad showed for a moment). **Unmerge** undoes it; the original breaks and their marks are kept.
+- Marks and merges are notes for judging detection; they don't change what the TV covers.
+
+Everything is stored in **`kid-ad-shield.db`** (SQLite, next to `server.py`). An old `breaks.json` is imported once, as per-channel programs. A new airing starts when a program has been quiet on that channel for 3+ hours.
+
 ## Reviewing detection (log-only)
 
 To check how good detection is before turning on covering, run:

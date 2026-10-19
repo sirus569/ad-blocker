@@ -391,7 +391,7 @@ function finishSecond(sec, score, thr) {
 
 function openBreak(startRef) {
   breakN += 1;
-  cur = { key: `${Date.now().toString(36)}-${breakN}`, channel, start_ref: startRef, end_ref: null };
+  cur = { key: `${Date.now().toString(36)}-${breakN}`, channel, program, start_ref: startRef, end_ref: null };
   presentRun = 0;
   history.push(cur);
   if (history.length > 10) history.shift();
@@ -422,7 +422,7 @@ function endSegment(why) {
 // Retried a few times so a brief server hiccup doesn't lose it from the log.
 function sendBreak(b, attempt = 0) {
   const retry = () => { if (attempt < 5) setTimeout(() => sendBreak(b, attempt + 1), 2000); };
-  chrome.runtime.sendMessage({ type: 'break', key: b.key, channel: b.channel,
+  chrome.runtime.sendMessage({ type: 'break', key: b.key, channel: b.channel, program: b.program,
     start_ref: b.start_ref, end_ref: b.end_ref })
     .then((r) => { if (!r || !r.ok) retry(); })
     .catch(retry);

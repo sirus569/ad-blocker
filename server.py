@@ -10,6 +10,9 @@ Python standard library only.
 Every break the detector finds is also written to logs/breaks-<session>.log
 (and a per-second score trace to logs/trace-<session>.csv) so detection quality
 can be reviewed later against a recording.
+
+Breaks are stored per program and airing in kid-ad-shield.db (SQLite, see db.py);
+review them at http://127.0.0.1:8787/review.
 """
 import argparse
 import atexit
@@ -20,6 +23,7 @@ import random
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -28,9 +32,13 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from db import DB, DBError
+
 HOST, PORT = '127.0.0.1', 8787
 HERE = os.path.dirname(os.path.abspath(__file__))
-BREAKS_FILE = os.path.join(HERE, 'breaks.json')
+BREAKS_FILE = os.path.join(HERE, 'breaks.json')   # old store: imported once into the DB
+DB_FILE = os.path.join(HERE, 'kid-ad-shield.db')
+REVIEW_FILE = os.path.join(HERE, 'review.html')
 CONFIG_FILE = os.path.join(HERE, 'config.json')   # optional: {"offset_s": {"<channel>": 0.0}}
 LOGS_DIR = os.path.join(HERE, 'logs')
 TRIVIA_FILE = os.path.join(HERE, 'trivia.json')       # [{"q": ..., "a": ...}, {"q": ...}]
@@ -52,6 +60,14 @@ def fnum(x):
     except (TypeError, ValueError):
         return None
     return v if math.isfinite(v) else None
+
+
+def finite(x):
+    """fnum() for API input: raises ValueError on anything that isn't a finite number."""
+    v = fnum(x)
+    if v is None:
+        raise ValueError(x)
+    return v
 
 
 def clock(ref):
@@ -159,49 +175,70 @@ def list_templates():
     return {'ok': True, 'templates': out}
 
 
+def program_name(raw, channel):
+    """The program a break belongs to: the detector's chosen program, else per channel."""
+    name = raw.strip()[:80] if isinstance(raw, str) else ''
+    return name or f'channel {channel}'
+
+
 class State:
-    def __init__(self, log_only):
+    def __init__(self, log_only, program_start_sod=None):
         self.lock = threading.Lock()
         self.log_only = log_only
+        self.db = DB(DB_FILE, program_start_sod)
+        self.det_touch_at = 0     # last time the detector's airing was updated
+        self.fallback_id = -1     # break ids if the DB ever fails (live covering must go on)
         self.det = {}        # latest detector report + 'recv' (server time received)
         self.tv = {}         # latest TV sync params + 'recv'
         self.breaks = {}     # key -> break dict
-        self.next_id = 1
+        self.next_id = 1_000_000   # fake (test) breaks only; real ones get DB ids
         self.pending_fake = []   # (start, end, channel) where start/end may be '+N' strings
         self.offsets = {}
         self.origins = {}          # channel -> ref that counts as program time 0:00:00
-        self.program_start_sod = None   # --program-start as seconds since local midnight
+        self.program_start_sod = program_start_sod   # --program-start as seconds since local midnight
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
         self.break_log = os.path.join(LOGS_DIR, f'breaks-{stamp}.log')
         self.trace_log = os.path.join(LOGS_DIR, f'trace-{stamp}.csv')
         self.trace_meta = None
         self.load()
 
-    # ---- persistence ----
+    # ---- persistence (SQLite, see db.py) ----
+    def _db(self, fn, *args):
+        """Run a DB call; on any DB error log it and return None. The live path
+        (covering the TV) must never fail because of storage."""
+        try:
+            return fn(*args)
+        except sqlite3.Error as e:
+            print(f'[db] error: {e}')
+            return None
+
     def load(self):
         try:
             with open(CONFIG_FILE) as f:
                 self.offsets = {k: float(v) for k, v in json.load(f).get('offset_s', {}).items()}
         except (OSError, ValueError):
             pass
+        if self.db.empty() and os.path.exists(BREAKS_FILE):
+            self.import_breaks_json()
+        for b in self.db.recent_live(time.time() - KEEP_S):
+            self.breaks[b['key']] = {**b, 'fake': False}
+
+    def import_breaks_json(self):
+        """One-time move of the old breaks.json into the DB (as per-channel programs)."""
         try:
             with open(BREAKS_FILE) as f:
                 items = json.load(f)
         except (OSError, ValueError):
             return
-        cutoff = time.time() - KEEP_S
+        n = 0
         for b in items:
-            if b['start_ref'] >= cutoff:
-                b['id'] = self.next_id
-                self.next_id += 1
-                self.breaks[b['key']] = b
-
-    def save(self):
-        real = [b for b in self.breaks.values() if not b.get('fake')]
-        tmp = BREAKS_FILE + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(real, f)
-        os.replace(tmp, BREAKS_FILE)
+            try:
+                aid = self.db.airing(program_name('', b['channel']), b['channel'], b['start_ref'])
+                self.db.upsert_break(b['key'], aid, b['start_ref'], b.get('end_ref'))
+                n += 1
+            except (KeyError, TypeError, sqlite3.Error):
+                continue
+        print(f'[db] imported {n} breaks from breaks.json (the file is left as it is)')
 
     # ---- review logs (call with lock held) ----
     def origin(self, channel, ref):
@@ -277,6 +314,7 @@ class State:
                 changed = True
                 if stuck:
                     print(f"[break] discarded stuck open break {b['id']} ch={b['channel']}")
+                    self._db(self.db.discard, key)
         return changed
 
     def resolve_fakes(self, channel, ref):
@@ -302,13 +340,19 @@ class State:
         if not isinstance(ch, str) or not ch:
             return {'ok': False, 'error': 'channel required'}
         with self.lock:
+            if program_name(d.get('program'), ch) != self.det.get('program'):
+                self.det_touch_at = 0
             self.det = {'channel': ch, 'ref': fnum(d.get('ref')), 'at_live': bool(d.get('at_live')),
                         'paused': bool(d.get('paused')), 'capture_ok': bool(d.get('capture_ok')),
-                        'logo': str(d.get('logo', '?')), 'recv': now}
+                        'logo': str(d.get('logo', '?')), 'recv': now,
+                        'program': program_name(d.get('program'), ch)}
+            # Keep the detector's airing current (creates it on the first report).
+            if self.det['ref'] is not None and now - self.det_touch_at >= 30:
+                self.det_touch_at = now
+                self._db(self.db.airing, self.det['program'], ch, self.det['ref'])
             if self.det['ref'] is not None and self.program_start_sod is None:
                 self.origins.setdefault(ch, self.det['ref'])
-            if self.maintain(now):
-                self.save()
+            self.maintain(now)
             follow = None
             tv_ch = self.tv.get('channel')
             if tv_ch and now - self.tv['recv'] <= ALIVE_S and tv_ch != ch:
@@ -324,15 +368,18 @@ class State:
         if d.get('end_ref') is not None and (end is None or end <= start):
             return {'ok': False, 'error': 'end_ref must be a number after start_ref'}
         with self.lock:
+            prog = program_name(d.get('program') or self.det.get('program', ''), ch)
+            aid = self._db(self.db.airing, prog, ch, start)
+            bid = self._db(self.db.upsert_break, key, aid, start, end) if aid else None
             b = self.breaks.get(key)
             new = b is None
             if new:
-                b = {'id': self.next_id, 'key': key, 'fake': False}
-                self.next_id += 1
+                if bid is None:
+                    bid, self.fallback_id = self.fallback_id, self.fallback_id - 1
+                b = {'id': bid, 'key': key, 'fake': False}
                 self.breaks[key] = b
             was_open = new or b['end_ref'] is None
             b.update(channel=ch, start_ref=start, end_ref=end, confirmed_at=time.time())
-            self.save()
             if new and end is None:
                 print(f"[break] OPEN  id={b['id']} ch={ch} start {clock(start)} (ref {start:.1f})")
                 if not b.get('fake'):
@@ -352,8 +399,7 @@ class State:
             self.tv = {'channel': ch, 'ref': ref, 'at_live': q.get('at_live', ['0'])[0] == '1',
                        'paused': q.get('paused', ['0'])[0] == '1', 'recv': now}
             self.resolve_fakes(ch, ref)
-            if self.maintain(now):
-                self.save()
+            self.maintain(now)
             alive = (bool(self.det) and now - self.det['recv'] <= ALIVE_S
                      and self.det['capture_ok'] and self.det['channel'] == ch)
             out = []
@@ -376,7 +422,7 @@ class State:
             tv_ok = bool(tv) and now - tv['recv'] <= HEARTBEAT_S
             parts = [f"detector {'✓' if det_ok else '✗'}"]
             if det:
-                parts.append(f"ch={det['channel']} logo {det['logo']}")
+                parts.append(f"ch={det['channel']} prog=\"{det.get('program', '')}\" logo {det['logo']}")
             parts.append(f"  tv {'✓' if tv_ok else '✗'}")
             if tv:
                 parts.append(f"ch={tv['channel']}")
@@ -407,12 +453,35 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Access-Control-Allow-Origin', '*')
+        if not self.path.startswith('/api/'):   # the review API is for the review page only
+            self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(body)
 
+    def _api(self, fn):
+        """Run a review-API call; turn bad requests into readable errors."""
+        try:
+            return self._send({'ok': True, **(fn() or {})})
+        except DBError as e:
+            return self._send({'ok': False, 'error': str(e)}, 400)
+        except (KeyError, TypeError, ValueError):
+            return self._send({'ok': False, 'error': 'bad request'}, 400)
+        except sqlite3.Error as e:
+            return self._send({'ok': False, 'error': f'database error: {e}'}, 500)
+
+    def _same_origin(self):
+        """Review-API writes only from the review page itself, so a website open in
+        the same browser can't change the data on this local server."""
+        origin = self.headers.get('Origin')
+        ok_origin = origin in (None, f'http://{HOST}:{PORT}', f'http://localhost:{PORT}')
+        return ok_origin and (self.headers.get('Content-Type') or '').startswith('application/json')
+
     def do_OPTIONS(self):
+        if self.path.startswith('/api/'):
+            self.send_response(403)   # no cross-site preflight for the review API
+            self.end_headers()
+            return
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
@@ -431,11 +500,29 @@ class Handler(BaseHTTPRequestHandler):
             self._send(get_template(parse_qs(u.query).get('name', [''])[0]))
         elif u.path == '/tv/sync':
             self._send(self.state.tv_sync(parse_qs(u.query)))
+        elif u.path == '/review':
+            try:
+                with open(REVIEW_FILE, 'rb') as f:
+                    body = f.read()
+            except OSError:
+                return self._send({'ok': False, 'error': 'review.html missing'}, 404)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+        elif u.path == '/api/programs':
+            self._api(lambda: {'programs': self.state.db.programs()})
+        elif u.path == '/api/airing':
+            self._api(lambda: {'airing': self.state.db.airing_detail(int(parse_qs(u.query)['id'][0]))})
         else:
             self._send({'ok': False, 'error': 'not found'}, 404)
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path.startswith('/api/') and not self._same_origin():
+            return self._send({'ok': False, 'error': 'forbidden'}, 403)
         try:
             n = int(self.headers.get('Content-Length', 0))
             if n > MAX_BODY:
@@ -453,6 +540,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send(self.state.trace(data))
         elif path == '/template':
             self._send(put_template(data))
+        elif path.startswith('/api/'):
+            db = self.state.db
+            routes = {
+                '/api/airing/start': lambda: db.set_start(int(data['id']), finite(data['start_ref'])),
+                '/api/mark': lambda: db.set_mark(int(data['break_id']), data['edge'], data.get('verdict'),
+                                                 None if data.get('seconds') is None else finite(data['seconds'])),
+                '/api/merge': lambda: {'id': db.merge(int(data['a']), int(data['b']))},
+                '/api/unmerge': lambda: db.unmerge(int(data['id'])),
+            }
+            if path not in routes:
+                return self._send({'ok': False, 'error': 'not found'}, 404)
+            self._api(routes[path])
         else:
             self._send({'ok': False, 'error': 'not found'}, 404)
 
@@ -469,10 +568,11 @@ def main():
                          "first reported ref); END may be 'open'; CHANNEL may be 'tv'")
     args = ap.parse_args()
 
-    state = State(args.log_only)
+    sod = None
     if args.program_start:
         h, m, *sec = (int(x) for x in args.program_start.split(':'))
-        state.program_start_sod = h * 3600 + m * 60 + (sec[0] if sec else 0)
+        sod = h * 3600 + m * 60 + (sec[0] if sec else 0)
+    state = State(args.log_only, sod)
     state.pending_fake = [tuple(f) for f in (args.fake_break or [])]
     Handler.state = state
 

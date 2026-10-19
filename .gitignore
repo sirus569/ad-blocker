@@ -1,0 +1,15 @@
+# Runtime data written by server.py (local to this Mac; recreated as it runs)
+kid-ad-shield.db
+kid-ad-shield.db-wal
+kid-ad-shield.db-shm
+breaks.json
+breaks.json.tmp
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store

@@ -79,7 +79,7 @@ YouTube TV uses YouTube's standard player script (`base.js`). The player element
 
 - `ThreadingHTTPServer` on `127.0.0.1:8787`. Shared state behind one lock. No detector code and no third-party dependencies: it only stores state and breaks and serves them.
 - Starts `caffeinate -d` as a child process on launch and terminates it on exit (keeps the laptop display awake).
-- Persists breaks to `breaks.json` next to the script (write on change, load on start; drop entries whose `start_ref` is more than 6 h behind the detector's latest reported `ref`).
+- Persists breaks in **SQLite** (`kid-ad-shield.db` next to the script; schema and queries in `db.py`, standard library only) grouped as **program -> airing -> breaks**. The live list the TV uses stays in memory (loaded from the DB at start: detector breaks from the last 6 h, keeping their DB ids); the DB keeps everything. Any DB error is logged and ignored by the live path so storage can never stop the TV from uncovering. Reports and breaks carry the detector's `program` (empty = `channel <id>`); a new airing starts when a program/channel has been quiet for 3 h; an airing's `start_ref` (program time 0:00:00) defaults to the first detector `ref` (or `--program-start`) and is editable on the review page. An old `breaks.json` is imported once. Plain Python was chosen over FastAPI: one local user, a handful of endpoints, no install step.
 - Prints one status line every 5 s, e.g. `detector ✓ ch=92H17SFrmxw logo ok  tv ✓ ch=92H17SFrmxw  lead 4:40  breaks 3 (1 open)`. Mark a part `✗` when its heartbeat is older than 3 s (the detector is also `✗` when it reports `capture_ok: false`). `logo` shows the detector's `logo` field (`learning`, `ok`, `none`). Add `TV AT LIVE (no lead)` when the TV reports `at_live` true, and `channel mismatch` when channels differ.
 - CORS headers are not needed (only the extension service worker calls it, and it has host permission), but harmless to keep.
 
@@ -106,6 +106,8 @@ Response:
  "breaks": [{"id": 7, "start": 1792224600.0, "end": 1792224780.0}, {"id": 8, "start": 1792225410.0, "end": null}]}
 ```
 Only breaks for that channel, with `offset_s` applied, limited to breaks that end after `ref - 60` (or are open). `detector_alive` = detector report within the last 10 s, its latest `capture_ok` is true, **and** the detector's channel equals the requested `channel` (a detector on another channel proves nothing about this one).
+
+**Review page** `GET /review` (`review.html`) and its API (same-origin only: writes need `Content-Type: application/json` and no foreign `Origin`; no CORS headers; preflight refused): `GET /api/programs`, `GET /api/airing?id=`, `POST /api/airing/start {id, start_ref}`, `POST /api/mark {break_id, edge: start|end, verdict: early|late|null, seconds >= 0}`, `POST /api/merge {a, b}` (adjacent, finished breaks of one airing; originals kept with `merged_into`; the merged break inherits the first's start mark and the second's end mark), `POST /api/unmerge {id}`. All times on the page are program time relative to the airing's start. Marks and merges are review-only and never change live covering. Tested on an isolated port: import, airings and grouping, marks with validation, merge/nested merge/unmerge, cross-site refusal, restart keeps ids, page controls.
 
 `POST /detector/trace`: `{"channel", "thr", "baseline", "rows": [[ref, score, present], ...]}`, per-second logo scores. Appended to `logs/trace-<session>.csv`.
 

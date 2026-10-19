@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Break Review</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --text: #1d2233; --muted: #667089; --line: #e2e5ee;
+    --accent: #2b4fd8; --accent-soft: #e7ecfd; --warn: #b4540c; --warn-soft: #fdf0e3; --ok: #1d7a46;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151f; --card: #1b2030; --text: #e8eaf2; --muted: #98a0b8; --line: #2c3347;
+      --accent: #8ea8ff; --accent-soft: #232c4a; --warn: #f0a868; --warn-soft: #3a2a1c; --ok: #6fd39b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; }
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  select, input, button { font: inherit; color: var(--text); }
+  select, input { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  button { background: var(--accent-soft); border: 1px solid transparent; border-radius: 6px; padding: 6px 12px; cursor: pointer; color: var(--accent); }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; }
+  .muted { color: var(--muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  td.t { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mark { display: flex; gap: 6px; align-items: center; }
+  .mark input { width: 70px; }
+  .mark.pending select, .mark.pending input { border-color: var(--warn); background: var(--warn-soft); }
+  .badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+  .scroll { overflow-x: auto; }
+  #status { position: fixed; right: 16px; bottom: 16px; background: var(--card); border: 1px solid var(--line);
+            border-radius: 8px; padding: 8px 12px; font-size: 13px; opacity: 0; transition: opacity .3s; }
+  #status.show { opacity: 1; }
+  #status.err { color: var(--warn); }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kid Ad Shield: break review</h1>
+
+  <div class="card">
+    <div class="row">
+      <label class="field">Program <select id="program"></select></label>
+      <label class="field">Airing <select id="airing"></select></label>
+    </div>
+  </div>
+
+  <div class="card" id="startCard" hidden>
+    <div class="row">
+      <label class="field">Program started at (broadcast clock)
+        <input type="time" step="1" id="startTime">
+      </label>
+      <button class="primary" id="saveStart">Save start time</button>
+      <span class="muted" id="startInfo"></span>
+    </div>
+    <p class="muted" style="margin:10px 0 0">All break times below are counted from this moment, so they match the
+      position in a recording that starts when the program starts.</p>
+  </div>
+
+  <div class="card" id="breaksCard" hidden>
+    <details style="margin-bottom:10px">
+      <summary>What the marks mean</summary>
+      <p class="muted">For the <b>start</b>: <i>too early</i> = the cover came before the ad (hid some game);
+        <i>too late</i> = the ad showed before the cover came. For the <b>end</b>: <i>too early</i> = the cover lifted
+        while the ad was still on; <i>too late</i> = the cover stayed on into the game. Pick a mark, then type how many
+        seconds off it was. <b>Merge with next</b> joins two breaks that were really one (the detector split it).</p>
+    </details>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Start</th><th>End</th><th>Length</th><th>Start mark</th><th>End mark</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="muted" id="summary" style="margin:12px 0 0"></p>
+  </div>
+
+  <div class="card empty" id="nothing" hidden>No breaks recorded yet. Breaks appear here as the detector finds them.</div>
+</main>
+<div id="status"></div>
+
+<script>
+// Times from the server are broadcast content timestamps (Unix seconds). Everything
+// shown here is program time: seconds since the airing's start.
+const $ = (id) => document.getElementById(id);
+let programs = [], airing = null;
+
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
+};
+
+function say(text, err = false) {
+  const s = $('status');
+  s.textContent = text;
+  s.className = 'show' + (err ? ' err' : '');
+  clearTimeout(say.t);
+  say.t = setTimeout(() => { s.className = err ? 'err' : ''; }, 2000);
+}
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
+  if (!j.ok) throw new Error(j.error || 'request failed');
+  return j;
+}
+
+function hms(sec) {
+  const neg = sec < 0;
+  const s = Math.round(Math.abs(sec));
+  const t = `${Math.floor(s / 3600)}:${String(Math.floor(s % 3600 / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  return neg ? `-${t}` : t;
+}
+const pt = (ref) => hms(ref - airing.start_ref);
+const clockOf = (ref) => new Date(ref * 1000).toLocaleTimeString();
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+
+// ---------- program / airing pickers ----------
+
+async function loadPrograms() {
+  programs = (await api('/api/programs')).programs;
+  const sel = $('program');
+  sel.replaceChildren(...programs.map((p) => el('option', { value: p.id, textContent: p.name })));
+  $('nothing').hidden = programs.length > 0;
+  if (!programs.length) return;
+  const saved = store.get('review.program');
+  if (saved && programs.some((p) => String(p.id) === saved)) sel.value = saved;
+  return fillAirings();
+}
+
+function fillAirings() {
+  const p = programs.find((x) => String(x.id) === $('program').value);
+  store.set('review.program', $('program').value);
+  const sel = $('airing');
+  sel.replaceChildren(...p.airings.map((a) => el('option', {
+    value: a.id,
+    textContent: `${new Date(a.first_ref * 1000).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}` +
+      ` · ${new Date(a.first_ref * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` +
+      ` · ${a.breaks} break${a.breaks === 1 ? '' : 's'}`,
+  })));
+  const saved = store.get('review.airing');
+  if (saved && p.airings.some((a) => String(a.id) === saved)) sel.value = saved;
+  return loadAiring();
+}
+
+async function loadAiring() {
+  store.set('review.airing', $('airing').value);
+  airing = (await api(`/api/airing?id=${encodeURIComponent($('airing').value)}`)).airing;
+  render();
+}
+
+// ---------- program start ----------
+
+function renderStart() {
+  $('startCard').hidden = false;
+  const d = new Date(airing.start_ref * 1000);
+  $('startTime').value = [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+  const by = { detector: 'first moment the detector saw (a guess)', flag: 'from --program-start', user: 'set by you' }[airing.start_source] || airing.start_source;
+  $('startInfo').textContent = `${d.toLocaleDateString()}, ${by}`;
+}
+
+$('saveStart').addEventListener('click', async () => {
+  const [h, m, s = 0] = $('startTime').value.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return say('Enter a time first.', true);
+  // Same clock time on the airing's day, or the day before/after, whichever is nearest
+  // (a program near midnight).
+  const base = new Date(airing.start_ref * 1000);
+  const options = [-1, 0, 1].map((dd) => {
+    const c = new Date(base); c.setDate(c.getDate() + dd); c.setHours(h, m, s, 0); return c.getTime() / 1000;
+  });
+  const start_ref = options.reduce((best, x) => (Math.abs(x - airing.start_ref) < Math.abs(best - airing.start_ref) ? x : best));
+  try {
+    await api('/api/airing/start', { id: airing.id, start_ref });
+    say('Start time saved.');
+    await loadAiring();
+  } catch (e) { say(e.message, true); }
+});
+
+// ---------- breaks table ----------
+
+function markControl(b, edge) {
+  const cur = b.marks[edge];
+  const box = el('div', { className: 'mark' });
+  const sel = el('select', { title: `${edge} mark` },
+    el('option', { value: '', textContent: 'OK' }),
+    el('option', { value: 'early', textContent: 'Too early' }),
+    el('option', { value: 'late', textContent: 'Too late' }));
+  const secs = el('input', { type: 'number', min: '0', step: '0.5', placeholder: 'sec', title: 'how many seconds off' });
+  sel.value = cur ? cur.verdict : '';
+  secs.value = cur ? cur.seconds : '';
+  secs.hidden = !cur;
+
+  async function save() {
+    const verdict = sel.value || null;
+    secs.hidden = !verdict;
+    if (verdict && secs.value === '') { box.classList.add('pending'); secs.focus(); return; } // need seconds first
+    const seconds = verdict ? Number(secs.value) : null;
+    if (verdict && !(seconds >= 0)) { box.classList.add('pending'); return say('Seconds must be 0 or more.', true); }
+    try {
+      await api('/api/mark', { break_id: b.id, edge, verdict, seconds });
+      box.classList.remove('pending');
+      b.marks[edge] = verdict ? { verdict, seconds } : undefined;
+      if (!verdict) { delete b.marks[edge]; secs.value = ''; }
+      renderSummary();
+      say('Saved.');
+    } catch (e) { say(e.message, true); }
+  }
+  sel.addEventListener('change', save);
+  secs.addEventListener('change', save);
+  box.append(sel, secs);
+  return box;
+}
+
+function render() {
+  renderStart();
+  const visible = airing.breaks.filter((b) => b.merged_into == null);
+  const label = new Map(visible.map((b, i) => [b.id, i + 1]));
+  $('breaksCard').hidden = false;
+  if (!visible.length) {
+    $('rows').replaceChildren(el('tr', {}, el('td', { colSpan: 7, className: 'empty', textContent: 'No breaks in this airing.' })));
+    renderSummary();
+    return;
+  }
+  $('rows').replaceChildren(...visible.map((b, i) => {
+    const next = visible[i + 1];
+    const actions = el('td');
+    if (b.source === 'merge') {
+      actions.append(el('span', { className: 'badge', textContent: 'merged' }), ' ',
+        el('button', { textContent: 'Unmerge', onclick: () => act('/api/unmerge', { id: b.id }, 'Unmerged.') }));
+    }
+    if (next && b.end_ref != null && next.end_ref != null) {
+      actions.append(' ', el('button', {
+        textContent: 'Merge with next',
+        title: `join #${i + 1} and #${i + 2} into one break`,
+        onclick: () => act('/api/merge', { a: b.id, b: next.id }, `Merged #${i + 1} and #${i + 2}.`),
+      }));
+    }
+    return el('tr', {},
+      el('td', { textContent: String(label.get(b.id)), title: `break id ${b.id}` }),
+      el('td', { className: 't', textContent: pt(b.start_ref), title: `broadcast clock ${clockOf(b.start_ref)}` }),
+      el('td', { className: 't', textContent: b.end_ref == null ? 'open' : pt(b.end_ref),
+                 title: b.end_ref == null ? 'end not found' : `broadcast clock ${clockOf(b.end_ref)}` }),
+      el('td', { className: 't', textContent: b.end_ref == null ? '' : hms(b.end_ref - b.start_ref).replace(/^0:0?/, '') }),
+      el('td', {}, markControl(b, 'start')),
+      el('td', {}, markControl(b, 'end')),
+      actions);
+  }));
+  renderSummary();
+}
+
+async function act(path, body, done) {
+  try { await api(path, body); say(done); await loadAiring(); } catch (e) { say(e.message, true); }
+}
+
+function renderSummary() {
+  const visible = airing.breaks.filter((b) => b.merged_into == null);
+  const part = (edge) => {
+    const m = visible.map((b) => b.marks[edge]).filter(Boolean);
+    const avg = (v) => { const xs = m.filter((x) => x.verdict === v); return xs.length ? `${xs.length} ${v === 'early' ? 'too early' : 'too late'} (avg ${(xs.reduce((s, x) => s + x.seconds, 0) / xs.length).toFixed(1)} s)` : null; };
+    return [avg('early'), avg('late')].filter(Boolean).join(', ') || 'all OK';
+  };
+  $('summary').textContent = `${visible.length} break${visible.length === 1 ? '' : 's'}. Starts: ${part('start')}. Ends: ${part('end')}.`;
+}
+
+$('program').addEventListener('change', () => fillAirings().catch((e) => say(e.message, true)));
+$('airing').addEventListener('change', () => loadAiring().catch((e) => say(e.message, true)));
+loadPrograms().catch((e) => say(`Could not load: ${e.message}`, true));
+</script>
+</body>
+</html>

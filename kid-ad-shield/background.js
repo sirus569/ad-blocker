@@ -93,13 +93,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // offscreen document says frames are flowing for THIS tab.
       (async () => {
         const { captureTabId } = await chrome.storage.session.get('captureTabId');
+        const { program = '' } = await chrome.storage.local.get('program'); // groups breaks per program on the server
         const fresh = captureFresh();
         if (!fresh) setBadge(false);
         const capture_ok = fresh && cap.ok && msg.ref != null &&
           !!sender.tab && sender.tab.id === captureTabId;
         const res = await post('/detector/report', {
           channel: msg.channel, ref: msg.ref, at_live: msg.at_live, paused: msg.paused,
-          wall: msg.wall, capture_ok, logo: fresh ? cap.logo : 'none',
+          wall: msg.wall, capture_ok, logo: fresh ? cap.logo : 'none', program,
         });
         lastReport = { at: Date.now(), serverOk: !!res.ok, capture_ok, fresh, capOk: cap.ok,
                        hasRef: msg.ref != null, tabId: sender.tab ? sender.tab.id : null, captureTabId };
@@ -129,7 +130,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'break':
       // From the offscreen detector: a break opened (end_ref null) or closed.
       post('/detector/break', {
-        key: msg.key, channel: msg.channel, start_ref: msg.start_ref, end_ref: msg.end_ref,
+        key: msg.key, channel: msg.channel, program: msg.program, start_ref: msg.start_ref, end_ref: msg.end_ref,
       }).then(sendResponse);
       return true;
 
