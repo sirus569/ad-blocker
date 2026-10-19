@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kid Ad Shield detector debug</title>
+  <style>
+    body { margin: 16px; font: 14px/1.5 system-ui, sans-serif; background: #121A3B; color: #F7F3D6; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    canvas { background: #000; max-width: 100%; border: 1px solid #4A5A9A; }
+    #corner { image-rendering: pixelated; width: 360px; height: auto; margin-left: 16px; vertical-align: top; }
+    pre { background: #0b1230; padding: 10px; border-radius: 6px; white-space: pre-wrap; }
+    button { padding: 6px 12px; border-radius: 6px; border: 1px solid #4A5A9A; background: #2B3A78; color: #F7F3D6; font: inherit; cursor: pointer; }
+    .legend span { margin-right: 14px; }
+    .red { color: #ff6b6b; } .cyan { color: #5ee0ff; }
+  </style>
+</head>
+<body>
+  <h1>Kid Ad Shield: detector debug</h1>
+  <p class="legend">
+    <span class="red">red = learned logo pixels</span>
+    <span class="cyan">cyan = edges in the frame right now</span>
+    <button id="relearn">Relearn this channel's logo</button>
+  </p>
+  <div><canvas id="frame" width="480" height="270"></canvas><canvas id="corner" width="120" height="68"></canvas></div>
+  <pre id="info">waiting for the detector...</pre>
+  <script src="debug.js"></script>
+</body>
+</html>

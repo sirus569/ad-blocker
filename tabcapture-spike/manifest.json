@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "tabCapture Spike (throwaway)",
+  "version": "0.0.2",
+  "minimum_chrome_version": "116",
+  "description": "Tests tabCapture from an offscreen document: survives navigation, unfocused window, long runs.",
+  "permissions": ["tabCapture", "activeTab", "offscreen", "storage", "tabs"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Start capture of this tab" },
+  "options_page": "log.html",
+  "commands": {
+    "nav": {
+      "suggested_key": { "default": "Alt+Shift+N", "mac": "Alt+Shift+N" },
+      "description": "Re-navigate the captured tab (same URL) to test the stream across navigation"
+    }
+  }
+}

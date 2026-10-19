@@ -1,0 +1,73 @@
+# Kid Ad Shield
+
+Covers the TV and mutes it during commercials in live YouTube TV (and labeled ads on Prime Video). Never skips ads. When unsure, it shows the game.
+
+## How it works
+
+- **Detector Chrome** (laptop screen, muted, ~5 min ahead) watches its own video for the channel logo to disappear and logs each break by content timestamp (YouTube's player reports the same timestamp for the same moment in any window). The detector runs inside the extension, using tab capture; no screen recording.
+- **TV Chrome** (on the TV, behind) covers and mutes when the content it's showing falls inside a logged break.
+- **`server.py`** (laptop Terminal) connects the two: it stores the breaks and tells each side what it needs. Stop it and the TV uncovers and does nothing.
+
+## One-time setup
+
+1. **Server:** needs only Python 3 (no packages). Run `python3 server.py` from this folder.
+2. **Detector Chrome profile:**
+   ```
+   open -na "Google Chrome" --args --user-data-dir="$HOME/.chrome-detector" --disable-gpu
+   ```
+   Sign into YouTube TV in it (skip Chrome sync).
+3. **Load the extension in both Chromes:** `chrome://extensions` → Developer mode → Load unpacked → `kid-ad-shield/`. Pin it. Needs Chrome 116 or newer.
+4. **Set modes in the extension popup:** TV Chrome = **Cover**, detector Chrome = **Reporter**.
+5. **macOS:** System Settings → Desktop & Dock → "Displays have separate Spaces" **on**.
+
+## Each time
+
+1. Laptop lid **open**, TV connected.
+2. `python3 server.py` (also keeps the display awake).
+3. Open detector Chrome (command above) on the laptop screen. Tune to the channel, set quality to the lowest, keep the window visible (never minimized).
+4. In the detector Chrome (mode = Reporter), with the YouTube TV tab open and in front, open the extension popup and press **Start capture**. The toolbar badge shows OK when frames are flowing (CLICK means capture isn't running). Redo this if you close the tab.
+5. TV Chrome on the TV: same channel. Open the extension popup and press **Start** (the badge shows ON; until then the TV Chrome never contacts the server). Fullscreen, **pause ~5 min** to build the lead, then play. Don't hit "Live".
+6. Check the Terminal status line: `detector ✓  tv ✓  lead 4:xx`.
+
+Change channels on the TV only; the detector follows.
+
+## Controls
+
+- **Kill switch:** Ctrl+C on `server.py`. TV uncovers within ~2 s.
+- **Start / Stop (TV Chrome popup):** Stop uncovers at once and stops all server contact; Start resumes. It remembers the choice across restarts.
+- **Manual cover:** popup buttons **Cover now** / **Uncover now** (TV Chrome), or click the video and press Option+Shift+K. Both work without the server. The shortcut only works when the TV page has keyboard focus, so the buttons are more reliable. **Uncover now** during a detected break dismisses that break for good; during a labeled ad it stays off until that ad's label goes away. In fullscreen, move the mouse to the top of the TV screen to reach the toolbar.
+- **Diagnostics:** Option+Shift+D prints ad-looking page elements to the console.
+- **Detector debug page:** open from the detector Chrome's popup. Shows the crop, the learned logo mask, the live score, and a **Relearn** button.
+
+## Reviewing detection (log-only)
+
+To check how good detection is before turning on covering, run:
+```
+python3 server.py --log-only
+```
+(optionally `--program-start 19:30` if you want times counted from when the program began; otherwise 0:00:00 is the first moment the detector reported on the channel.)
+
+- **`logs/breaks-<time>.log`**: one line when a break opens and one when it closes, e.g. `started -> 1:05:03, ended -> 1:07:23`, plus the broadcast clock time so you can line it up with a recording.
+- **`logs/trace-<time>.csv`**: the logo score for every second. A real break shows scores near 0; use it to see why a break was missed or invented.
+- **Detector debug page** (popup in the detector Chrome → *Detector debug*): shows the video, the corner the detector decided holds the logo, the learned logo pixels (red) and the current edges (cyan). If red isn't sitting on the logo, press **Relearn** during normal play.
+- Start the detector during normal play, not a commercial: it spends the first ~90 s learning the logo.
+
+## Behavior notes
+
+- Covers from break start until 1.5 s before it ends; max 3 min per break (longer breaks leak their tail).
+- The cover shows a countdown, **Back in m:ss**, when the break's end is already known (the usual case with a few minutes of lead), or **Back soon** while it is still being detected. It never counts past the 3-minute cap.
+- Breaks under ~15 s aren't covered (to avoid hiding replays).
+- First ~90 s on a new channel: learning the logo, no covering. If a commercial was playing during that minute, use Relearn.
+- Lead under ~20 s: covering gets less reliable. Pause the TV to rebuild it.
+- `python3 server.py --log-only` detects and prints breaks without covering. Use it for tuning.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `tv ✗` | TV tab open on tv.youtube.com? Mode = Cover? Reload tab after extension reloads. |
+| `detector ✗` | Detector Chrome open and playing? Mode = Reporter? Badge says OK? If not, click the icon to restart capture. |
+| `logo none` / `logo learning` | Wait ~90 s. If it stays `none`, open the debug page and check the mask; try Relearn during normal play. |
+| Never covers | Run `server.py --log-only` first and check that breaks are logged; check the debug page shows the video crop. |
+| Detector audio on TV | Detector video should auto-mute; mute the tab manually if not. |
+| Detector shows on TV | Lid was closed. Open it, move the window back. |

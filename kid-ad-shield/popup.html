@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 280px; margin: 0; padding: 16px;
+      font: 14px/1.4 ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif;
+      background: #1B2552; color: #F7F3D6;
+    }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    label { display: flex; align-items: center; gap: 8px; margin: 10px 0; cursor: pointer; }
+    input[type="text"] {
+      width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px;
+      border-radius: 6px; border: 1px solid #4A5A9A; background: #121A3B; color: #F7F3D6;
+      font: inherit;
+    }
+    button {
+      padding: 6px 12px; border-radius: 6px; border: 1px solid #4A5A9A;
+      background: #2B3A78; color: #F7F3D6; font: inherit; cursor: pointer;
+    }
+    select {
+      width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px;
+      border-radius: 6px; border: 1px solid #4A5A9A; background: #121A3B; color: #F7F3D6;
+      font: inherit;
+    }
+    input:focus-visible, select:focus-visible { outline: 2px solid #FFE9A8; outline-offset: 1px; }
+    .field { margin: 12px 0; }
+    .help { font-size: 12px; color: #B9C3E8; margin-top: 14px; white-space: pre-line; }
+    kbd { background: #121A3B; border: 1px solid #4A5A9A; border-radius: 4px; padding: 0 4px; }
+  </style>
+</head>
+<body>
+  <h1>Kid Ad Shield</h1>
+  <div class="field">
+    Mode
+    <select id="mode">
+      <option value="cover">Cover (TV)</option>
+      <option value="reporter">Reporter (detector)</option>
+    </select>
+    <div class="help" id="modeNote"></div>
+  </div>
+  <div class="field" id="coverCtl" hidden>
+    <button id="runBtn">Start</button>
+    <div class="help" id="runNote"></div>
+    <div style="margin-top:12px; display:flex; gap:8px;">
+      <button id="coverNow">Cover now</button>
+      <button id="uncoverNow">Uncover now</button>
+    </div>
+    <div class="help" id="coverState"></div>
+  </div>
+  <div class="field" id="capture" hidden>
+    <button id="startCapture">Start capture</button>
+    <button id="openDebug">Detector debug</button>
+    <div class="help" id="captureNote"></div>
+  </div>
+  <label><input type="checkbox" id="enabled"> Enabled (off = this Chrome does nothing automatic)</label>
+  <div class="field">
+    Message on screen
+    <input type="text" id="message" maxlength="60">
+  </div>
+  <label><input type="checkbox" id="debug"> Log details to the console</label>
+  <div class="help">
+    <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> covers or uncovers the screen by hand.<br>
+    <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> during an ad lists ad elements in the console.<br>
+    Reload the Prime Video or YouTube TV tab after installing.
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
