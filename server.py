@@ -81,23 +81,24 @@ def hms(sec):
     return f'{sign}{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}'
 
 
-def trivia_item():
-    """A random {question, answer} from trivia.json. answer is None for open-ended
-    questions. Re-read every call so the file can be edited while running; any
-    problem (missing file, bad JSON, bad entries) just means no question."""
+TRIVIA_RECENT = 4    # earlier questions sent back for the overlay's recap row
+
+
+def trivia_items():
+    """The usable questions in trivia.json as [{q, a}] (a None = open-ended). Re-read
+    every call so the file can be edited while running; any problem (missing file,
+    bad JSON, bad entries) just means no questions."""
     try:
         with open(TRIVIA_FILE) as f:
             items = json.load(f)
     except (OSError, ValueError):
-        return {'ok': True, 'question': None, 'answer': None}
-    good = [i for i in items if isinstance(i, dict) and isinstance(i.get('q'), str) and i['q'].strip()] \
-        if isinstance(items, list) else []
-    if not good:
-        return {'ok': True, 'question': None, 'answer': None}
-    i = random.choice(good)
-    a = i.get('a')
-    return {'ok': True, 'question': i['q'].strip(),
-            'answer': a.strip() if isinstance(a, str) and a.strip() else None}
+        return []
+    out = []
+    for i in items if isinstance(items, list) else []:
+        if isinstance(i, dict) and isinstance(i.get('q'), str) and i['q'].strip():
+            a = i.get('a')
+            out.append({'q': i['q'].strip(), 'a': a.strip() if isinstance(a, str) and a.strip() else None})
+    return out
 
 
 def template_path(name):
@@ -188,6 +189,7 @@ class State:
         self.db = DB(DB_FILE, program_start_sod)
         self.det_touch_at = 0     # last time the detector's airing was updated
         self.fallback_id = -1     # break ids if the DB ever fails (live covering must go on)
+        self.trivia_mem = {}      # channel -> questions asked, when no airing is known
         self.det = {}        # latest detector report + 'recv' (server time received)
         self.tv = {}         # latest TV sync params + 'recv'
         self.breaks = {}     # key -> break dict
@@ -239,6 +241,38 @@ class State:
             except (KeyError, TypeError, sqlite3.Error):
                 continue
         print(f'[db] imported {n} breaks from breaks.json (the file is left as it is)')
+
+    # ---- trivia ----
+    def trivia(self, channel):
+        """Next question for the TV's cover. Questions don't repeat within a game (the
+        airing on that channel) until every question has been asked. Also returns the
+        last few asked before it, newest first, for the overlay's recap row."""
+        items = trivia_items()
+        aid = self._db(self.db.current_airing, channel) if channel else None
+        asked = self._db(self.db.trivia_asked, aid) if aid else None
+        in_db = asked is not None
+        if not in_db:                           # no game known (or DB trouble): remember for this run
+            asked = self.trivia_mem.setdefault(channel or '', [])
+        recent = []                             # newest first, each question once
+        for x in reversed(asked):
+            if len(recent) == TRIVIA_RECENT:
+                break
+            if all(r['q'] != x['q'] for r in recent):
+                recent.append({'q': x['q'], 'a': x['a']})
+        if not items:
+            return {'ok': True, 'question': None, 'answer': None, 'recent': recent}
+        # Deal like a shuffled deck: no repeats until every question has been asked,
+        # then a fresh round (only this round's questions count as used).
+        this_round = asked[len(asked) - len(asked) % len(items):]
+        seen = {x['q'] for x in this_round}
+        pick = random.choice([i for i in items if i['q'] not in seen] or items)
+        if in_db:
+            with self.lock:
+                tv_ref = self.now_ref(self.tv, time.time()) if self.tv.get('channel') == channel else None
+            self._db(self.db.record_trivia, aid, pick['q'], pick['a'], tv_ref)
+        else:
+            asked.append(pick)
+        return {'ok': True, 'question': pick['q'], 'answer': pick['a'], 'recent': recent}
 
     # ---- review logs (call with lock held) ----
     def origin(self, channel, ref):
@@ -493,7 +527,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == '/health':
             self._send({'ok': True})
         elif u.path == '/trivia':
-            self._send(trivia_item())
+            self._send(self.state.trivia(parse_qs(u.query).get('channel', [''])[0]))
         elif u.path == '/templates':
             self._send(list_templates())
         elif u.path == '/template':

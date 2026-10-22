@@ -42,7 +42,7 @@ Change channels on the TV only; the detector follows.
 ## Overlay and trivia
 
 - The cover closes like a curtain over 5 s and opens again so the game is fully back exactly when the break ends (it starts opening 5 s early; the sound comes back at the end). If something goes wrong (server stopped, Stop, Uncover now) it opens in under a second.
-- While covered it shows trivia from **`trivia.json`** (next to `server.py`): a question, then the answer 15 s later, a new one every 30 s. Edit the file any time, no restart needed. Format: `[{"q": "Question?", "a": "Answer"}, {"q": "Open-ended question?"}]` (leave out `"a"` for questions with no right answer).
+- While covered it shows trivia from **`trivia.json`** (next to `server.py`): a question, then the answer 15 s later, a new one every 30 s. Questions don't repeat within a game until all of them have been asked, and the last 4 from this game (with answers) sit as cards along the bottom of the cover. Edit the file any time, no restart needed. Format: `[{"q": "Question?", "a": "Answer"}, {"q": "Open-ended question?"}]` (leave out `"a"` for questions with no right answer).
 
 ## Logo templates
 
@@ -57,6 +57,7 @@ Open **http://127.0.0.1:8787/review** while `server.py` is running.
 - For each break, mark the **start** and the **end** separately as *OK*, *Too early* or *Too late*, plus how many seconds. Click **What the marks mean** on the page for which way is which.
 - **Merge with next** joins two breaks that were really one (the detector split it and the ad showed for a moment). **Unmerge** undoes it; the original breaks and their marks are kept.
 - Marks and merges are notes for judging detection; they don't change what the TV covers.
+- **Trivia asked during this airing** lists every question shown, with its answer and when it came up (in program time).
 
 Everything is stored in **`kid-ad-shield.db`** (SQLite, next to `server.py`). An old `breaks.json` is imported once, as per-channel programs. A new airing starts when a program has been quiet on that channel for 3+ hours.
 

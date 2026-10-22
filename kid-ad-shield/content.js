@@ -235,6 +235,21 @@
     .tq { font-size: clamp(18px, 3.4vmin, 44px); font-weight: 600; line-height: 1.3; }
     .tq:empty { display: none; }
     .ta { font-size: clamp(16px, 3vmin, 40px); color: #FFE9A8; margin-top: 1.2vh; min-height: 1.3em; }
+    /* earlier questions from this game, newest first, along the bottom */
+    .recap {
+      position: absolute; left: 4vw; right: 4vw; bottom: 4vh;
+      display: flex; justify-content: center; gap: 1.6vw;
+    }
+    .recap:empty { display: none; }
+    .card {
+      flex: 0 1 min(22vw, 340px);
+      background: rgba(18, 26, 59, 0.72); border: 1px solid rgba(247, 243, 214, 0.18);
+      border-radius: 1.4vmin; padding: 1.4vmin 1.8vmin;
+      font-size: clamp(13px, 1.9vmin, 24px); line-height: 1.3; text-align: left;
+    }
+    .card .cq { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .card .ca { color: #FFE9A8; margin-top: 0.8vmin; font-weight: 600; }
+    .card .ca.open { color: #B9C3E8; font-weight: 400; font-style: italic; }
     @keyframes breathe {
       0%, 100% { transform: scale(1); }
       50% { transform: scale(1.05); }
@@ -308,7 +323,10 @@
     ta.className = 'ta';
     trivia.append(tq, ta);
 
-    content.append(moon, msg, sub, count, trivia);
+    const recap = document.createElement('div');
+    recap.className = 'recap';
+
+    content.append(moon, msg, sub, count, trivia, recap);
     scene.append(left, right, content);
     root.append(style, scene);
   }
@@ -400,10 +418,12 @@
   function fetchTrivia() {
     if (triviaPending) return;
     triviaPending = true;
-    sendToBackground({ type: 'trivia' }, (r) => {
+    sendToBackground({ type: 'trivia', channel: channelId() }, (r) => {
       triviaPending = false;
-      trivia = { q: r && r.ok && r.question ? r.question : null, a: (r && r.answer) || null, at: performance.now() };
+      trivia = { q: r && r.ok && r.question ? r.question : null, a: (r && r.answer) || null, at: performance.now(),
+                 recent: (r && r.ok && Array.isArray(r.recent)) ? r.recent : [] };
       renderTrivia();
+      renderRecap();
     });
   }
 
@@ -417,6 +437,25 @@
     const aText = !reveal ? '' : trivia.a ? `Answer: ${trivia.a}` : 'No right answer. Talk it over!';
     if (q.textContent !== qText) q.textContent = qText;
     if (a.textContent !== aText) a.textContent = aText;
+  }
+
+  // Earlier questions from this game (from the server), newest first.
+  function renderRecap() {
+    if (!host) return;
+    const box = host.shadowRoot.querySelector('.recap');
+    const items = (trivia && trivia.recent) || [];
+    box.replaceChildren(...items.map((it) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const q = document.createElement('div');
+      q.className = 'cq';
+      q.textContent = it.q;
+      const a = document.createElement('div');
+      a.className = it.a ? 'ca' : 'ca open';
+      a.textContent = it.a ? `A: ${it.a}` : 'Open question';
+      card.append(q, a);
+      return card;
+    }));
   }
 
   function updateTrivia() {

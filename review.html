@@ -86,6 +86,16 @@
     <p class="muted" id="summary" style="margin:12px 0 0"></p>
   </div>
 
+  <div class="card" id="triviaCard" hidden>
+    <h2 style="font-size:16px;margin:0 0 8px">Trivia asked during this airing</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>When</th><th>Question</th><th>Answer</th></tr></thead>
+        <tbody id="triviaRows"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="card empty" id="nothing" hidden>No breaks recorded yet. Breaks appear here as the detector finds them.</div>
 </main>
 <div id="status"></div>
@@ -224,8 +234,21 @@ function markControl(b, edge) {
   return box;
 }
 
+function renderTrivia() {
+  const list = airing.trivia || [];
+  $('triviaCard').hidden = false;
+  $('triviaRows').replaceChildren(...(list.length ? list.map((t) => el('tr', {},
+    // When: program time from the TV's position, if known; else the wall-clock time it was shown.
+    el('td', { className: 't', textContent: t.ref != null ? pt(t.ref) : new Date(t.asked_at * 1000).toLocaleTimeString(),
+               title: t.ref != null ? `broadcast clock ${clockOf(t.ref)}` : 'time shown (TV position unknown)' }),
+    el('td', { textContent: t.q }),
+    el('td', { textContent: t.a || 'Open question', className: t.a ? '' : 'muted' })))
+    : [el('tr', {}, el('td', { colSpan: 3, className: 'empty', textContent: 'No trivia was shown during this airing.' }))]));
+}
+
 function render() {
   renderStart();
+  renderTrivia();
   const visible = airing.breaks.filter((b) => b.merged_into == null);
   const label = new Map(visible.map((b, i) => [b.id, i + 1]));
   $('breaksCard').hidden = false;

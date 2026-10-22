@@ -166,7 +166,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case 'trivia': // TV overlay
-      call('/trivia').then(sendResponse);
+      call(`/trivia?channel=${encodeURIComponent(msg.channel || '')}`).then(sendResponse);
       return true;
 
     case 'capture-ended': // from the offscreen document

@@ -113,7 +113,7 @@ Only breaks for that channel, with `offset_s` applied, limited to breaks that en
 
 `GET /health` → `{"ok": true}` (for manual checks).
 
-`GET /trivia` → `{"ok": true, "question": "...", "answer": "..." | null}`: a random item from `trivia.json` next to the script (`[{"q": ..., "a": ...}, {"q": ...}]`; `a` optional = open-ended). Re-read on every call so it can be edited while running. Missing/broken file or bad entries never fail: they just give `question: null`.
+`GET /trivia?channel=<tv channel>` → `{"ok": true, "question": "...", "answer": "..." | null, "recent": [{q, a}]}`: the next item from `trivia.json` next to the script, dealt like a shuffled deck per airing (the airing currently on that channel): no repeats until every question has been asked, then a new round. Each question served is recorded in the DB table `trivia_asked` (airing, question, answer, the TV's content `ref` at that moment) and listed on the review page; with no airing known it is remembered in memory for the server run. `recent` = up to 4 earlier questions of this airing, newest first, each once (the overlay's recap cards). (`[{"q": ..., "a": ...}, {"q": ...}]`; `a` optional = open-ended). Re-read on every call so it can be edited while running. Missing/broken file or bad entries never fail: they just give `question: null`.
 
 `GET /templates` → `{"ok": true, "templates": [{name, saved_at, corner, pixels}]}`. `GET /template?name=<program>` → `{"ok": true, "template": {...} | null}`. `POST /template {"name", "template"}` saves (validated: corner 0-3, sizes, mask indices in range, numeric baseline); `"template": null` deletes. Stored as `templates/<slug>.json` next to the script; names are slugged (`[A-Za-z0-9_.-]`, max 80) and unusable names are refused.
 

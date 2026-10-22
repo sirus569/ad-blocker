@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS marks (
   updated_at REAL NOT NULL,
   PRIMARY KEY (break_id, edge)
 );
+CREATE TABLE IF NOT EXISTS trivia_asked (
+  id        INTEGER PRIMARY KEY,
+  airing_id INTEGER REFERENCES airings(id),   -- the game it was asked during (NULL if unknown)
+  question  TEXT NOT NULL,
+  answer    TEXT,                             -- NULL for open-ended questions
+  ref       REAL,                             -- TV's content time when asked (program time on review)
+  asked_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trivia_by_airing ON trivia_asked(airing_id, asked_at);
 """
 
 
@@ -134,6 +143,27 @@ class DB:
         with self.lock:
             return self._one('SELECT COUNT(*) AS n FROM breaks')['n'] == 0
 
+    # ---------- trivia shown on the TV ----------
+
+    def current_airing(self, channel):
+        """The airing currently on `channel` (the most recent one still active), or None."""
+        with self.lock:
+            a = self._one('SELECT id FROM airings WHERE channel = ? AND last_ref >= ? '
+                          'ORDER BY last_ref DESC LIMIT 1', (channel, time.time() - AIRING_GAP_S))
+        return a['id'] if a else None
+
+    def trivia_asked(self, airing_id):
+        """Questions already asked during this airing, oldest first: [{q, a}]."""
+        with self.lock:
+            rows = self._all('SELECT question, answer FROM trivia_asked WHERE airing_id IS ? '
+                             'ORDER BY asked_at, id', (airing_id,))
+        return [{'q': r['question'], 'a': r['answer']} for r in rows]
+
+    def record_trivia(self, airing_id, question, answer, ref):
+        with self.lock:
+            self.conn.execute('INSERT INTO trivia_asked(airing_id, question, answer, ref, asked_at) '
+                              'VALUES (?, ?, ?, ?, ?)', (airing_id, question, answer, ref, time.time()))
+
     # ---------- read by the review page ----------
 
     def programs(self):
@@ -157,6 +187,9 @@ class DB:
                                "WHERE airing_id = ? AND status = 'ok' ORDER BY start_ref, id", (airing_id,))
             marks = self._all('SELECT m.break_id, m.edge, m.verdict, m.seconds FROM marks m '
                               'JOIN breaks b ON b.id = m.break_id WHERE b.airing_id = ?', (airing_id,))
+            trivia = self._all('SELECT question AS q, answer AS a, ref, asked_at FROM trivia_asked '
+                               'WHERE airing_id = ? ORDER BY asked_at, id', (airing_id,))
+        a['trivia'] = trivia
         for b in breaks:
             b['marks'] = {m['edge']: {'verdict': m['verdict'], 'seconds': m['seconds']}
                           for m in marks if m['break_id'] == b['id']}
