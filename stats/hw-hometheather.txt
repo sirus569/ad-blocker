@@ -1,0 +1,53 @@
+=== OS ===
+Ubuntu 26.04.1 LTS
+7.0.0-38-generic
+session: wayland  desktop: ubuntu:GNOME
+
+=== CPU ===
+CPU(s):                                  4
+Model name:                              Intel(R) Core(TM) i7-4500U CPU @ 1.80GHz
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+CPU(s) scaling MHz:                      90%
+CPU max MHz:                             3000.0000
+flags: aes avx2 sse4_2 
+
+=== Memory ===
+               total        used        free      shared  buff/cache   available
+Mem:           7.2Gi       2.9Gi       1.4Gi       989Mi       4.1Gi       4.3Gi
+Swap:          4.0Gi          0B       4.0Gi
+-- RAM modules (asks for your password; to skip, press Enter 3 times):
+      2 	Configured Memory Speed: 1600 MT/s
+      2 	Size: 4 GB
+      2 	Speed: Unknown
+      2 	Type: <OUT OF SPEC>
+      4 	Type: DIMM
+      2 	Type: Unknown
+
+=== GPU ===
+00:02.0 VGA compatible controller [0300]: Intel Corporation Haswell-ULT Integrated Graphics Controller [8086:0a16] (rev 09)
+vainfo not installed (sudo apt install vainfo) - shows hardware VP9/AV1 decode
+
+=== Displays ===
+eDP-1 connected primary 3200x1800+0+0 (normal left inverted right x axis y axis) 290mm x 170mm
+   3200x1800     59.96*+
+
+=== Disk ===
+NAME     SIZE ROTA MODEL
+sda    476.9G    0 SAMSUNG MZMTD512HAGL-000L1
+/dev/sda11       88G   14G   70G  17% /
+
+=== Chrome ===
+Google Chrome 156.0.8078.47 
+
+=== Thermals / battery ===
+    energy-full:         36.95 Wh
+    energy-full-design:  49.28 Wh
+    capacity-level:      Normal
+    capacity:            74.9797%
+
+=== CPU benchmark (about 20 s) ===
+-- single core (sha256, 16KB blocks):
+sha256          374964.22k
+-- all cores:
+sha256          674526.00k
