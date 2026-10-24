@@ -204,6 +204,32 @@ Runs only in reporter mode, in an **offscreen document** (`offscreen.html` / `of
 
 The user watches **FOX, CBS, NBC, ABC** (live sports). That the logo disappears during commercials on each of these is an assumption, not yet verified. Step 5 acceptance is per network: for each, confirm the learned mask lands on the logo and logged breaks match observed commercial breaks. A network where it does not work gets `logo: none` and no covering.
 
+## 5.7 Prime Video live (investigation, not built)
+
+Prime Video live streams, like YouTube TV, carry no ad labels during broadcast breaks, so label detection (5.4) doesn't cover them; they need the detector approach.
+
+| Fact | Evidence |
+|---|---|
+| `chrome.tabCapture` does not give usable Prime video (user report) | User test, 2026-10-22 |
+| A macOS screenshot of Prime playing in the GPU-off Chrome shows the picture | User test (Cmd+Shift+3), 2026-10-22 |
+| Prime allows only **one stream** at a time for this account, so the two-player design (detector ahead of the TV) can't run | User report, 2026-10-22 |
+| The page's own requests during a live commercial carry no ad signal: only heartbeats (30/60 s), playback-session updates (`PES UpdateSession`, every 3 min, `eventType=PLAY`) and a title-status JSON every 90 s (`impulses`: `LIVE_GAME_ENDED`, `LIVE_OUTRO_SLATE`, which could later be used to stop at game end) | HAR export, 2026-10-22 |
+| Live video arrives over one long-lived **WebTransport** (QUIC) session at a steady ~8.5 Mbps: no manifest, no segment requests, no reconnect or rate change around the break | `chrome://net-export` log, 2026-10-22 |
+
+**Update (2026-10-22): two Prime streams turned out to be possible; timeline test done.**
+
+| Fact | Evidence |
+|---|---|
+| `video.currentTime` counts from each player's own load (starts near 0), so it is not shared | Two windows loaded ~5 min apart |
+| `seekable.end` tracks the live edge (grows with the wall clock, ~4.7 s ahead of `currentTime`); `wall - (seekable.end - currentTime)` matched between the two windows within ~0.6 s | Same test |
+| **No pause buffer on Prime live**: pausing froze the live edge, and on resume the player (`sye.js`, Amazon's low-latency player) was destroyed and rebuilt and restarted at live (`currentTime` back to 0) | Pause test in window A |
+
+So the lead-based design (TV minutes behind the detector) cannot work for Prime live: the TV can't be behind live. The remaining option is a **live mode**: both players at live, the detector watching its own GPU-off window (window capture or OS screen capture), covering once the logo has been absent for N s (the first N s of each ad leak) and uncovering ~1 s after it returns (about 1 s of play hidden per break). Not built; waiting on the window-capture test and the user's decision.
+
+**Earlier conclusion (before two streams were possible): Prime live is parked.** With one stream there is no player running ahead of the TV, and no ad signal reaches the page or the network in a readable form (markers, if any, would be inside the encrypted WebTransport media, reachable only by hooking Amazon's player code: fragile, not recommended). Revisit only with a second Prime stream (then: OS screen capture of a GPU-off detector window, since tab capture is blocked) or with audio-based real-time detection (covers late and can hide a little play at every break end). If a second stream becomes available, the remaining unknown is: whether two Prime players share a content timeline (the role `getMediaReferenceTime()` plays on YouTube TV). Test: the same live channel in two windows loaded 10+ min apart, logging `video.currentTime`/`seekable` every 5 s; at live the values must match, and pausing one for 30 s must move it exactly 30 s behind. Without a shared timeline the detector can't run ahead of the TV.
+
+**Audio experiment (data collection only, built 2026-10-22).** In cover mode on Prime/Amazon pages the popup shows *Prime live audio (experiment)*: **Start audio capture** captures the tab's audio in the offscreen document (`audio.js`), keeps it playing to the speakers, and every 100 ms records `rms_db`, `peak_db`, spectral `flatness` (≈1 noise/crowd, ≈0 tones/music) and `centroid_hz`; **Break started / Break ended** buttons record the user's marks. `server.py` writes both to `logs/audio-<session>.csv` (`POST /audio/trace`, `POST /audio/mark`; marks are written immediately, features in 2 s batches, so sort by time). Nothing covers or mutes in this mode. Known limits: no lead (detection would be live, covering late and unable to uncover before hearing the game), and the cover's normal mute would silence the captured audio, so an audio-based mode would have to mute inside its own audio path. Harness-tested with synthetic sound (noise -> silence -> tone): features separate cleanly and marks are recorded. Next: one real game with marked breaks, then look for a usable signature (splice silences, loudness/flatness shifts).
+
 ## 6. Display and process setup (target environment)
 
 - MacBook, lid **open**, external TV over HDMI. Clamshell mode would move the detector onto the TV.
