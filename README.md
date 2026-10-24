@@ -16,9 +16,11 @@ app/                    everything needed to run
                         (kid-ad-shield.db and logs/ are created here as it runs)
   extension/            the Chrome extension (load unpacked from here)
   launch-chromes-ubuntu.sh   starts the TV and detector Chromes on Ubuntu
-research/               testing and planning, not needed to run
+spec/                   the plan
   SPEC.md               design spec and verified facts
-  spikes/               throwaway tabCapture test extensions (results in SPEC.md section 3)
+  IDEAS.md              running list of ideas to build later
+research/               tests and experiments, not needed to run
+  spikes/               throwaway tabCapture test extensions (results in spec/SPEC.md section 3)
   hardware/             hw-check.sh and load-test.py for Ubuntu laptops, results/ = their output
 ```
 

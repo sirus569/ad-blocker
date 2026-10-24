@@ -2,7 +2,7 @@
 
 Spec for building the next version of Kid Ad Shield. The existing code (Chrome extension v1.2.1 in `kid-ad-shield/` and the old server as `server-old.py`) is included alongside this file. Read this whole spec before starting; section 9 is the build order.
 
-Layout (since 2026-10-24): what runs is in `app/` (`app/server/` = `server.py` and its files, `app/extension/` = the extension, `app/launch-chromes-ubuntu.sh`); tests and planning are in `research/` (this file, `research/spikes/`, `research/hardware/`).
+Layout (since 2026-10-24): what runs is in `app/` (`app/server/` = `server.py` and its files, `app/extension/` = the extension, `app/launch-chromes-ubuntu.sh`); the spec and the ideas list are in `spec/` (this file, `spec/IDEAS.md`); tests and experiments are in `research/` (`research/spikes/`, `research/hardware/`).
 
 ## 1. Goal and hard constraints
 
