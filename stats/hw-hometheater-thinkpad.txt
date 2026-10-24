@@ -1,0 +1,52 @@
+=== OS ===
+Ubuntu 26.04.1 LTS
+7.0.0-38-generic
+session: wayland  desktop: ubuntu:GNOME
+
+=== CPU ===
+CPU(s):                                  4
+Model name:                              Intel(R) Core(TM) i5-6200U CPU @ 2.30GHz
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+CPU(s) scaling MHz:                      94%
+CPU max MHz:                             2800.0000
+flags: aes avx2 sse4_2 
+
+=== Memory ===
+               total        used        free      shared  buff/cache   available
+Mem:            10Gi       2.5Gi       3.5Gi       599Mi       5.8Gi       8.4Gi
+Swap:          4.0Gi          0B       4.0Gi
+-- RAM modules (asks for your password; to skip, press Enter 3 times):
+      2 	Configured Memory Speed: 2133 MT/s
+      1 	Size: 4 GB
+      1 	Size: 8 GB
+      2 	Speed: 2133 MT/s
+      2 	Type: DDR4
+
+=== GPU ===
+00:02.0 VGA compatible controller [0300]: Intel Corporation Skylake-U GT2 [HD Graphics 520] [8086:1916] (rev 07)
+vainfo not installed (sudo apt install vainfo) - shows hardware VP9/AV1 decode
+
+=== Displays ===
+eDP-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 310mm x 170mm
+   1920x1080     59.96*+
+
+=== Disk ===
+NAME     SIZE ROTA MODEL
+sda    238.5G    0 SanDisk SD8TN8U256G1001
+/dev/sda2       233G   13G  209G   6% /
+
+=== Chrome ===
+Google Chrome 156.0.8078.47 
+
+=== Thermals / battery ===
+    energy-full:         19.29 Wh
+    energy-full-design:  23.54 Wh
+    capacity-level:      Normal
+    capacity:            81.9456%
+
+=== CPU benchmark (about 20 s) ===
+-- single core (sha256, 16KB blocks):
+sha256          350738.84k
+-- all cores:
+sha256          731470.23k
