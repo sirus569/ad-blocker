@@ -2,11 +2,13 @@
 
 Spec for building the next version of Kid Ad Shield. The existing code (Chrome extension v1.2.1 in `kid-ad-shield/` and the old server as `server-old.py`) is included alongside this file. Read this whole spec before starting; section 9 is the build order.
 
+Layout (since 2026-10-24): what runs is in `app/` (`app/server/` = `server.py` and its files, `app/extension/` = the extension, `app/launch-chromes-ubuntu.sh`); tests and planning are in `research/` (this file, `research/spikes/`, `research/hardware/`).
+
 ## 1. Goal and hard constraints
 
-Cover the TV screen and mute the sound during commercial breaks in **live** YouTube TV (live sports), automatically, on a Mac.
+Cover the TV screen and mute the sound during commercial breaks in **live** YouTube TV (live sports), automatically, on one laptop (Mac or Ubuntu).
 
-- **Local only.** Everything runs on one Mac. The server binds to `127.0.0.1` only.
+- **Local only.** Everything runs on one laptop. The server binds to `127.0.0.1` only.
 - **Never skip, block, seek past, or speed up ads.** Cover and mute only. Never set `video.currentTime` or `playbackRate`, and **never call the YouTube player's `seekTo`, `seekBy`, `seekToLiveHead`, `seekToStreamTime`, `requestSeekToWallTimeSeconds`, `initiateUnifiedSeek`, or any other seek method.** Read-only use of the player API only.
 - **Err on leaking the ad, never cut off the game.** Every tunable and every failure mode must fail toward *not covering*. A few seconds of ad showing is acceptable; hiding live play is not.
 - **Kill switch = stop `server.py`.** If the server is unreachable, the TV extension uncovers and does nothing automatic.
@@ -50,8 +52,8 @@ YouTube TV uses YouTube's standard player script (`base.js`). The player element
 | Fact | Evidence |
 |---|---|
 | OS screenshots capture the video when Chrome GPU is disabled | Cmd+Shift+3 test |
-| `chrome.tabCapture` returns real video frames of the YouTube TV tab in the GPU-off detector Chrome (popup test, `tabcapture-test/`) | Canvas showed moving picture, non-flat stddev |
-| Offscreen-document capture (`tabcapture-spike/`) started by one toolbar click delivers real frames with no popup open, unfocused, for 9+ min (`track=live`, moving picture, `sd` 22-94, `still=0`) | Spike log |
+| `chrome.tabCapture` returns real video frames of the YouTube TV tab in the GPU-off detector Chrome (popup test, `research/spikes/tabcapture-test/`) | Canvas showed moving picture, non-flat stddev |
+| Offscreen-document capture (`research/spikes/tabcapture-spike/`) started by one toolbar click delivers real frames with no popup open, unfocused, for 9+ min (`track=live`, moving picture, `sd` 22-94, `still=0`) | Spike log |
 | Capture survives a **full navigation** of the tab (`chrome.tabs.update`): one ~0.5 s blank-frame blip (`STATE OK->BLK->OK`), then the same stream continues (sample counter and uptime unbroken, `track=live`). Only same-URL navigation was tested | Spike log, 14:49:56 |
 | Closing the tab ends the track (`track ENDED`); the offscreen document keeps ticking on the last frame (`sd=0`, `track=ended`). Reopening the stream needs a new toolbar click (new `START`), after which frames resume | Spike log, 14:47:06 and 14:47:59 |
 | Minimizing the detector window did not flip the state to `STILL`/`BLK` or end the track in the spike log (exact minimize time/duration not recorded) | Spike log; treat as "not proven harmful", keep the `capture_ok` guard |
@@ -232,12 +234,20 @@ So the lead-based design (TV minutes behind the detector) cannot work for Prime 
 
 ## 6. Display and process setup (target environment)
 
-- MacBook, lid **open**, external TV over HDMI. Clamshell mode would move the detector onto the TV.
-- System Settings → Desktop & Dock → "Displays have separate Spaces" **on**.
+- Laptop (MacBook or Ubuntu laptop), lid **open**, external TV over HDMI. Clamshell mode would move the detector onto the TV.
 - TV Chrome: normal profile, fullscreen on the TV display.
-- Detector Chrome: `open -na "Google Chrome" --args --user-data-dir="$HOME/.chrome-detector" --disable-gpu`, on the laptop screen, windowed (never minimized), not fully covered by other windows, quality set to lowest. After launching it and tuning to a channel, click the extension icon on the YouTube TV tab once and press "Start capture" (5.3).
+- Detector Chrome: separate profile `--user-data-dir="$HOME/.chrome-detector"` with `--disable-gpu`, on the laptop screen, windowed (never minimized), not fully covered by other windows, quality set to lowest. After launching it and tuning to a channel, click the extension icon on the YouTube TV tab once and press "Start capture" (5.3).
 - Terminal with `server.py` on the laptop screen. No Screen Recording permission or Python dependencies are needed.
 - YouTube TV uses 2 concurrent streams for this setup.
+
+| | Mac | Ubuntu |
+|---|---|---|
+| Launch both Chromes | By hand: TV Chrome normally; detector with `open -na "Google Chrome" --args --user-data-dir="$HOME/.chrome-detector" --disable-gpu` | `bash app/launch-chromes-ubuntu.sh` (below) |
+| Server | `python3 app/server/server.py` | `gnome-session-inhibit --inhibit idle python3 app/server/server.py` |
+| Display stays awake | `server.py` runs `caffeinate -d` | `gnome-session-inhibit` (server.py does nothing here) |
+| Two displays | System Settings → Desktop & Dock → "Displays have separate Spaces" **on** | Nothing to set |
+
+**`app/launch-chromes-ubuntu.sh`** starts both Chromes on `https://tv.youtube.com/`, detached (`setsid`) so they outlive the terminal: the TV Chrome as `google-chrome --new-window` (default profile, hardware acceleration on) and the detector as `google-chrome --user-data-dir=$HOME/.chrome-detector --disable-gpu --no-first-run --no-default-browser-check --new-window`. It does not start `server.py`, load the extension, or place windows (on a Wayland desktop Chrome usually can't position its own windows); it prints a reminder when nothing listens on 127.0.0.1:8787. A Chrome already running with a profile only opens a new window and keeps its original flags, so the script warns when a detector-profile Chrome is running without `--disable-gpu` (tab capture would give black frames). `research/hardware/load-test.py` tells the two apart by `--disable-gpu` / `chrome-detector` in the command line, so it works with Chromes started this way. A Mac version is not written yet.
 
 ## 7. Failure behavior (all must fail toward not covering)
 
@@ -262,8 +272,8 @@ Phone remote; LAN access; cloud anything; skipping or seeking past ads; Prime Vi
 
 ## 9. Build order and acceptance tests
 
-1. **`tabCapture` feasibility test. DONE.** Real frames in the GPU-off detector Chrome (throwaway extension in `tabcapture-test/`). Decision: the detector runs in the extension; server has no detector code.
-1b. **Offscreen capture spike. DONE** (`tabcapture-spike/`). Passed: no popup, unfocused 9+ min of live frames, full-navigation survival (0.5 s blank blip), tab-close ends the track, minimize not proven harmful. Results in section 3.
+1. **`tabCapture` feasibility test. DONE.** Real frames in the GPU-off detector Chrome (throwaway extension in `research/spikes/tabcapture-test/`). Decision: the detector runs in the extension; server has no detector code.
+1b. **Offscreen capture spike. DONE** (`research/spikes/tabcapture-spike/`). Passed: no popup, unfocused 9+ min of live frames, full-navigation survival (0.5 s blank blip), tab-close ends the track, minimize not proven harmful. Results in section 3.
 2. **Server core.** New `server.py`: endpoints, state, `breaks.json`, status line, `caffeinate`, `127.0.0.1` only, `POST /detector/break`, `--log-only`. Test with `curl`. Add a `--fake-break START_REF END_REF CHANNEL` flag for testing (also accept `+N` meaning N seconds after the TV's first reported `ref`, `open` as END for an open break, and `tv` as CHANNEL for whatever channel the TV is on; the flag can repeat). Per-channel `offset_s` comes from an optional `config.json` next to the script: `{"offset_s": {"ABC": 0.0}}`. **DONE and tested with curl** (endpoints, validation, persistence, `--log-only`, stuck-open-break discard, `follow_channel`, status line, clean Ctrl+C/`kill` including `caffeinate`).
 3. **Extension cover mode + MAIN-world probe.** Modes in `storage.local`, probe → `ref`, `/tv/sync`, health rule, cover decision, max cover, phone-remote removal. **Accept:** a fake break covers and uncovers at the right `ref` (± 0.5 s); pausing the TV delays the cover by the pause length; `Ctrl+C` on the server uncovers within 2 s.
    **Built; verified in a harness, not yet in real Chrome.** A test page with a fake player (`getMediaReferenceTime()`) loaded the real `content.js`, `page-probe.js`, `background.js` against the real `server.py`. Results: a confirmed break covered at +10.00 s and uncovered at +28.50 s of content time for a 10-30 break with `END_EARLY` 1.5 (exact); pausing the player for 15 s delayed the cover by exactly 15 s of wall time; killing the server mid-cover uncovered in 1.28 s; an open break did not cover without a live detector, covered ~0.3 s after one appeared, and uncovered ~10 s after it went silent. **Live check by the user in the TV Chrome (real YouTube TV player, unpacked extension): all step 3 tests passed** (probe on the real player, fake-break cover/uncover, pause test, kill switch). Still untested: the 180 s cap and label detection on real pages.

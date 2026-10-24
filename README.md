@@ -15,6 +15,7 @@ app/                    everything needed to run
   server/               server.py, db.py, review.html, trivia.json, templates/
                         (kid-ad-shield.db and logs/ are created here as it runs)
   extension/            the Chrome extension (load unpacked from here)
+  launch-chromes-ubuntu.sh   starts the TV and detector Chromes on Ubuntu
 research/               testing and planning, not needed to run
   SPEC.md               design spec and verified facts
   spikes/               throwaway tabCapture test extensions (results in SPEC.md section 3)
@@ -29,7 +30,7 @@ Works on both; the server needs only Python 3 and the extension needs Chrome 116
 
 | | Mac | Ubuntu |
 |---|---|---|
-| Start the detector Chrome | `open -na "Google Chrome" --args --user-data-dir="$HOME/.chrome-detector" --disable-gpu` | `google-chrome --user-data-dir="$HOME/.chrome-detector" --disable-gpu &` |
+| Start both Chromes | TV Chrome: open it normally. Detector: `open -na "Google Chrome" --args --user-data-dir="$HOME/.chrome-detector" --disable-gpu` | `bash app/launch-chromes-ubuntu.sh` (opens both on tv.youtube.com; by hand, the detector is `google-chrome --user-data-dir="$HOME/.chrome-detector" --disable-gpu &`) |
 | Start the server | `python3 app/server/server.py` | `gnome-session-inhibit --inhibit idle python3 app/server/server.py` |
 | Keep the display awake | Automatic: `server.py` runs `caffeinate` | `gnome-session-inhibit` (above) stops the screen from blanking while the server runs. `server.py` alone does not. Or: Settings → Power → Screen Blank → **Never** |
 | Two displays | System Settings → Desktop & Dock → "Displays have separate Spaces" **on** | Nothing to set |
@@ -42,6 +43,8 @@ Elsewhere in this README, "Option" means Alt on Ubuntu and `python3 app/server/s
 
 1. **Server:** needs only Python 3 (no packages). Run `python3 app/server/server.py` (Ubuntu: see [Mac and Ubuntu](#mac-and-ubuntu)).
 2. **Detector Chrome profile:** start it with the command for your system in [Mac and Ubuntu](#mac-and-ubuntu). Sign into YouTube TV in it (skip Chrome sync).
+   - **Make it look different:** in the detector Chrome only, open `chrome://settings/manageProfile`, name it **DETECTOR – GPU off** and pick a loud theme color (e.g. red). It stays with that profile, so the TV Chrome keeps the normal look. Tab capture records only the page, not Chrome's toolbar, so this doesn't affect detection.
+   - **Check the GPU is off:** open `chrome://gpu` in each Chrome. Detector = "Software only, hardware acceleration unavailable"; TV = "Hardware accelerated". If the detector shows hardware accelerated, it was already running without `--disable-gpu`: quit all its windows and start it again.
 3. **Load the extension in both Chromes:** `chrome://extensions` → Developer mode → Load unpacked → `app/extension/`. Pin it. Needs Chrome 116 or newer.
 4. **Set modes in the extension popup:** TV Chrome = **Cover**, detector Chrome = **Reporter**.
 5. **macOS only:** System Settings → Desktop & Dock → "Displays have separate Spaces" **on**.
@@ -50,7 +53,7 @@ Elsewhere in this README, "Option" means Alt on Ubuntu and `python3 app/server/s
 
 1. Laptop lid **open**, TV connected.
 2. `python3 app/server/server.py` (on Mac it also keeps the display awake; on Ubuntu use the `gnome-session-inhibit` command).
-3. Open detector Chrome (command in [Mac and Ubuntu](#mac-and-ubuntu)) on the laptop screen. Tune to the channel, set quality to the lowest, keep the window visible (never minimized).
+3. Open detector Chrome (command in [Mac and Ubuntu](#mac-and-ubuntu); on Ubuntu `bash app/launch-chromes-ubuntu.sh` opens it and the TV Chrome together) on the laptop screen. Tune to the channel, set quality to the lowest, keep the window visible (never minimized).
 4. In the detector Chrome (mode = Reporter), with the YouTube TV tab open and in front, open the extension popup, pick the **Program** from the dropdown (programs you've watched before are listed; choose **New program…** and type a name like `NBC SNF` the first time), then press **Start capture** (the button hides while capture is running and comes back if it stops; pressing it never relearns the logo). A program you've watched before loads its saved logo instantly; a new one learns it in the first ~90 s of normal play. The toolbar badge shows OK when frames are flowing (CLICK means capture isn't running). Redo this if you close the tab.
 5. TV Chrome on the TV: same channel. Open the extension popup and press **Start** (the badge shows ON; until then the TV Chrome never contacts the server). Fullscreen, **pause ~5 min** to build the lead, then play. Don't hit "Live".
 6. Check the Terminal status line: `detector ✓  tv ✓  lead 4:xx`.
