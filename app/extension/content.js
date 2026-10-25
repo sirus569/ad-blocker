@@ -77,6 +77,7 @@
   let coverReason = '';       // why the screen is covered (shown in the popup)
   let labelDismissed = false; // user pressed Uncover now on a labeled ad: stay off until the label goes
   let breakCoverStart = 0;    // when that cover began (ms)
+  let moonTotal = null;       // s from that cover's start to its uncover, once the end is known
   const suppressed = new Set(); // break ids that hit MAX_COVER_S: never re-cover
 
   const log = (...args) => { if (settings.debug) console.log('[Kid Ad Shield]', ...args); };
@@ -166,7 +167,8 @@
 
   const CURTAIN_S = 5;        // curtain closing, and planned opening, in seconds
   const QUICK_OPEN_S = 0.6;   // opening when the uncover was not planned
-  const TRIVIA_EVERY_S = 30;  // a new trivia question this often while covered
+  const TRIVIA_EVERY_S = 21;  // a new trivia question this often while covered (answer up 6 s)
+  const OPEN_TRIVIA_EVERY_S = 30; // ...for questions with no answer: 15 s to talk it over
   const ANSWER_AFTER_S = 15;  // reveal the answer this long after the question
 
   const OVERLAY_CSS = `
@@ -200,18 +202,26 @@
     }
     /* text appears once the curtain has (nearly) met in the middle */
     .scene.closed .content { opacity: 1; transition: opacity 1s ease var(--cdelay); }
+    /* an SVG moon: half lit (manual/label covers), full ("Back soon") or the break countdown */
     .moon {
-      width: 22vmin; height: 22vmin; border-radius: 50%;
-      background: #FFE9A8;
-      box-shadow: 0 0 6vmin 1vmin rgba(255, 233, 168, 0.35);
-      position: relative;
+      width: 22vmin; height: 22vmin; position: relative;
       animation: breathe 6s ease-in-out infinite;
     }
-    .moon::after {
-      content: ""; position: absolute; border-radius: 50%;
-      width: 22vmin; height: 22vmin; top: -3vmin; left: 6vmin;
-      background: #1B2552;
+    .moon svg {
+      position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;
+      filter: drop-shadow(0 0 3vmin rgba(255, 233, 168, 0.35));
     }
+    .moon.counting { animation: none; }
+    .ghost { fill: rgba(255, 233, 168, 0.06); stroke: rgba(255, 233, 168, 0.3); stroke-width: 0.8; }
+    .lit { fill: #FFE9A8; }
+    .craters { fill: rgba(196, 166, 96, 0.32); }
+    .mtime {
+      font-size: 26px; font-weight: 700; text-anchor: middle; dominant-baseline: central;
+      font-variant-numeric: tabular-nums;
+    }
+    .soon .mtime { font-size: 17px; }
+    .on-dark { fill: #FFE9A8; }
+    .on-lit { fill: #1B2552; }
     .star {
       position: absolute; width: 0.6vmin; height: 0.6vmin; border-radius: 50%;
       background: #F7F3D6; opacity: 0.7;
@@ -225,12 +235,6 @@
       font-size: clamp(16px, 2.6vmin, 32px);
       color: #B9C3E8; text-align: center;
     }
-    .count {
-      font-size: clamp(22px, 4.5vmin, 56px);
-      font-weight: 700; color: #FFE9A8; text-align: center;
-      font-variant-numeric: tabular-nums;
-    }
-    .count:empty { display: none; }
     .trivia { max-width: 70vw; text-align: center; margin-top: 1vh; }
     .tq { font-size: clamp(18px, 3.4vmin, 44px); font-weight: 600; line-height: 1.3; }
     .tq:empty { display: none; }
@@ -303,6 +307,23 @@
 
     const moon = document.createElement('div');
     moon.className = 'moon';
+    // The moon. Its time is drawn twice: yellow over the dark part, and navy
+    // clipped to the lit part, so it reads at every phase.
+    const svg = svgEl('svg', { viewBox: '-50 -50 100 100' });
+    const clip = svgEl('clipPath', { id: 'kas-lit' });
+    clip.appendChild(svgEl('path', { class: 'lit-shape', transform: MOON_TILT }));
+    // Spots fixed on the moon's face; the shadow passes over them.
+    const craters = svgEl('g', { class: 'craters', 'clip-path': 'url(#kas-lit)' });
+    for (const [cx, cy, r] of CRATERS) craters.appendChild(svgEl('circle', { cx, cy, r }));
+    const defs = svgEl('defs', {});
+    defs.appendChild(clip);
+    svg.append(defs,
+      svgEl('circle', { class: 'ghost', r: MOON_R }),
+      svgEl('path', { class: 'lit lit-shape', transform: MOON_TILT }),
+      craters,
+      svgEl('text', { class: 'mtime on-dark' }),
+      svgEl('text', { class: 'mtime on-lit', 'clip-path': 'url(#kas-lit)' }));
+    moon.appendChild(svg);
 
     const msg = document.createElement('div');
     msg.className = 'msg';
@@ -311,9 +332,6 @@
     const sub = document.createElement('div');
     sub.className = 'sub';
     sub.textContent = 'Taking a little break';
-
-    const count = document.createElement('div');
-    count.className = 'count'; // "Back in 1:23" during a known break
 
     const trivia = document.createElement('div');
     trivia.className = 'trivia';
@@ -326,7 +344,7 @@
     const recap = document.createElement('div');
     recap.className = 'recap';
 
-    content.append(moon, msg, sub, count, trivia, recap);
+    content.append(moon, msg, sub, trivia, recap);
     scene.append(left, right, content);
     root.append(style, scene);
   }
@@ -383,10 +401,55 @@
     if (msg) msg.textContent = settings.message || DEFAULTS.message;
   }
 
-  function setCountdown(text) {
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const MOON_R = 48;          // in the moon SVG's 100x100 viewBox
+  const MOON_TILT = 'rotate(-45)'; // shadow comes in from the top right, last crescent at the bottom left
+  const CRATERS = [           // [cx, cy, r] spots on the moon's lit part
+    [-18, -20, 9], [12, -27, 5], [-28, 9, 7], [9, 16, 11],
+    [26, -5, 6], [-9, 32, 5], [29, 23, 4], [-35, -9, 3.5], [-14, 18, 3],
+  ];
+
+  function svgEl(tag, attrs) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    return el;
+  }
+
+  // Lit part of a waning moon with fraction `f` of its area left: the left half
+  // disc plus (f > 1/2) or minus (f < 1/2) half an ellipse, so the area is exactly f.
+  function litPath(f) {
+    const r = MOON_R;
+    const k = r * (2 * f - 1);
+    return `M 0 ${-r} A ${r} ${r} 0 0 0 0 ${r} A ${Math.abs(k).toFixed(2)} ${r} 0 0 ${k >= 0 ? 0 : 1} 0 ${-r} Z`;
+  }
+
+  function setMoonText(el, lines) {
+    const key = lines.join('|');
+    if (el.dataset.key === key) return;
+    el.dataset.key = key;
+    el.replaceChildren(...lines.map((line, i) => {
+      const t = svgEl('tspan', { x: 0, y: (i - (lines.length - 1) / 2) * 19 });
+      t.textContent = line;
+      return t;
+    }));
+  }
+
+  // The moon: half lit with no time (m null: manual and label covers), full and
+  // saying "Back soon" while a break's end is unknown, or waning with the time
+  // left shown as m:ss.
+  function setMoon(m) {
     if (!host) return;
-    const el = host.shadowRoot.querySelector('.count');
-    if (el && el.textContent !== text) el.textContent = text;
+    const root = host.shadowRoot;
+    const moon = root.querySelector('.moon');
+    moon.classList.toggle('soon', !!m && !!m.soon);
+    moon.classList.toggle('counting', !!m && !m.soon);
+    const f = !m ? 0.5 : m.soon ? 1 : Math.min(1, Math.max(0, m.frac));
+    const d = litPath(f);
+    for (const p of root.querySelectorAll('.lit-shape')) {
+      if (p.getAttribute('d') !== d) p.setAttribute('d', d);
+    }
+    const lines = !m ? [] : m.soon ? ['Back', 'soon'] : [mmss(m.left)];
+    for (const t of root.querySelectorAll('.mtime')) setMoonText(t, lines);
   }
 
   const mmss = (sec) => {
@@ -404,10 +467,15 @@
     return Math.min(b.end - END_EARLY - ref, capLeft);
   }
 
-  // Countdown text: exact when the end is known, "Back soon" while it is open.
+  // Countdown for the moon: "Back soon" while the end is open, else the seconds
+  // left and the fraction still lit. The cover's whole span is fixed when the end
+  // first becomes known, so an end found late starts the moon partly used, and a
+  // paused TV holds it still.
   function breakCountdown(b) {
-    if (b.end == null || currentRef() == null) return 'Back soon';
-    return `Back in ${mmss(secondsUntilUncover(b))}`;
+    if (b.end == null || currentRef() == null) return { soon: true };
+    const left = secondsUntilUncover(b);
+    if (moonTotal == null) moonTotal = (performance.now() - breakCoverStart) / 1000 + left;
+    return { left, frac: moonTotal > 0 ? left / moonTotal : 0 };
   }
 
   // ---------- trivia (from server.py's /trivia; some questions have no answer) ----------
@@ -459,7 +527,8 @@
   }
 
   function updateTrivia() {
-    if (!trivia || performance.now() - trivia.at >= TRIVIA_EVERY_S * 1000) fetchTrivia();
+    const every = trivia && trivia.q && !trivia.a ? OPEN_TRIVIA_EVERY_S : TRIVIA_EVERY_S;
+    if (!trivia || performance.now() - trivia.at >= every * 1000) fetchTrivia();
     renderTrivia();
   }
 
@@ -622,7 +691,7 @@
     const healthy = serverHealthy();
     let kind = null;    // 'hard' (manual/break: no hysteresis) or 'label'
     let reason = null;
-    let countdown = ''; // only for break covers
+    let moon = null;    // break covers only: the countdown (null = half moon)
     let planned = null; // seconds until a break cover will lift (end known or cap)
 
     if (manual) {
@@ -631,7 +700,7 @@
       let hit = breakHit();
       if (hit) {
         const now = performance.now();
-        if (breakCoverId !== hit.id) { breakCoverId = hit.id; breakCoverStart = now; }
+        if (breakCoverId !== hit.id) { breakCoverId = hit.id; breakCoverStart = now; moonTotal = null; }
         else if (now - breakCoverStart >= MAX_COVER_S * 1000) {
           suppressed.add(hit.id); // covered too long: give up on this break for good
           log(`break ${hit.id} hit the ${MAX_COVER_S}s cap; uncovering`);
@@ -640,7 +709,7 @@
       }
       if (hit) {
         kind = 'hard'; reason = `break ${hit.id}`;
-        countdown = breakCountdown(hit);
+        moon = breakCountdown(hit);
         planned = secondsUntilUncover(hit);
       } else {
         breakCoverId = null;
@@ -665,7 +734,7 @@
       } else {
         cover(reason);
       }
-      setCountdown(countdown);
+      setMoon(moon);
       updateTrivia();
     } else if (covered) {
       // Labels flicker, so they get a short grace period. Breaks and a dead

@@ -1,12 +1,12 @@
 # Kid Ad Shield: ideas (running list)
 
-Ideas to build later. Nothing here is built unless its status says so. When one is built, move what it does into `SPEC.md` and mark it **Done** here.
+Ideas to build later. Nothing here is built unless its status says so. When one is built, move what it does into `SPEC.md` and remove it from here. Numbers stay fixed, so a gap is an idea that has been built (2: shorter trivia rounds, 4: moon countdown; both in `SPEC.md`).
 
 | # | Idea | Status | Added |
 |---|---|---|---|
 | 1 | [Control app for non-technical users](#1-control-app-for-non-technical-users) | Planned, waiting on answers | 2026-10-24 |
-| 2 | [Shorter gap between trivia questions](#2-shorter-gap-between-trivia-questions) | Planned, waiting on answers | 2026-10-24 |
 | 3 | [Add trivia questions from a phone](#3-add-trivia-questions-from-a-phone) | Idea, needs a spec decision | 2026-10-24 |
+| 5 | [Test the overlay without a live stream](#5-test-the-overlay-without-a-live-stream) | Planned, answers in | 2026-10-25 |
 
 ---
 
@@ -51,18 +51,6 @@ Ideas to build later. Nothing here is built unless its status says so. When one 
 
 ---
 
-## 2. Shorter gap between trivia questions
-
-**Problem:** after the answer appears, the next question takes 15 s. In `app/extension/content.js`, `ANSWER_AFTER_S = 15` reveals the answer and `TRIVIA_EVERY_S = 30` brings the next question, so the answer stays up for 15 s.
-
-**Plan:** add a separate answer-hold time (about **6 s**): next question = question time (15 s) + hold. A round goes from 30 s to about 21 s; the question still gets 15 s. Update the timings in README "Overlay and trivia" and in SPEC. After the change: reload the extension and the TV tab, check with `--fake-break`.
-
-**Open questions:**
-1. Answer hold: **6 s** / 10 s / other.
-2. Questions with no right answer ("Talk it over!"): same gap / keep 15 s for discussion.
-
----
-
 ## 3. Add trivia questions from a phone
 
 **Goal:** during a game, open a page on a phone, type a question (answer optional), and have it asked next.
@@ -73,7 +61,7 @@ Ideas to build later. Nothing here is built unless its status says so. When one 
 - Main server stays on `127.0.0.1`. A **separate small listener** on the home network (e.g. port 8789) serves only the add-question page and its POST. It can't cover, uncover, stop, or read anything else.
 - A short **PIN** (shown in the control app) is required, so others on the Wi-Fi can't add questions.
 - The server keeps a **priority queue**: the next `/trivia` call takes from it before the normal deck. Questions are recorded in `trivia_asked` as usual.
-- "Next" means the **next rotation while covered**: if no break is on, it waits for the next one (with idea 2, at most ~20 s into a break).
+- "Next" means the **next rotation while covered**: if no break is on, it waits for the next one (trivia rounds are 21 s, so at most ~20 s into a break).
 - The control app (idea 1) shows the phone address as a QR code. Needs a QR generator (standard library has none: a small vendored JS or Python one).
 - Mac: the firewall asks once to allow incoming connections for Python. Ubuntu: `ufw` is usually off; if on, the port must be allowed.
 
@@ -81,3 +69,33 @@ Ideas to build later. Nothing here is built unless its status says so. When one 
 1. OK to relax the 127.0.0.1-only / no-phone rules for a question-only listener?
 2. Save phone questions into `trivia.json` for future games / use them only for this game?
 3. PIN: fixed in a config file / new one each session?
+
+---
+
+## 5. Test the overlay without a live stream
+
+**Goal:** open a tab, click the extension, and step through everything the TV can show (curtain closing and opening, countdown, "Back soon", trivia question and answer, recap) without YouTube TV, a game on, the detector, or `--fake-break`.
+
+**Today:** `content.js` runs only on YouTube TV and Prime Video pages. **Cover now** / **Uncover now** in the popup (and Alt+Shift+K) give a manual cover, which shows no countdown. A countdown needs a break from the server plus the player's `ref` from `page-probe.js`, and trivia comes from the server's `/trivia`, which records each question as asked.
+
+**Plan:**
+- **Test section in the popup**, shown only in Cover mode and only while **Log details to the console** (`debug`) is ticked, under a "Test overlay" heading that starts collapsed. All test controls live here; nothing on the TV page itself. Controls:
+  - **Break length** field, in seconds: default **15**, saved in `chrome.storage.local`, at least 10 (5 s curtain closing + 5 s opening, `CURTAIN_S`).
+  - **Close curtain** / **Open curtain** (with the real 5 s `CURTAIN_S` animation).
+  - **Break:** cover for the break length with the waning-moon countdown (SPEC "Countdown on the overlay"), then open the curtain on time.
+  - **Open break:** "Back soon"; then **End it** switches to a countdown of the break length, like a real break whose end gets detected.
+  - **Next question** / **Show answer now** / **Question with no answer** / **Show recap.** Needed because a 15 s break is shorter than one trivia round (`ANSWER_AFTER_S` 15 s, `TRIVIA_EVERY_S` 21 s).
+  - **Server down:** shows what happens when the server stops mid-cover.
+  - **Stop test:** uncovers and returns the tab to normal.
+- **Any tab:** on a page where `content.js` isn't already running, the popup injects it with `chrome.scripting` (new `scripting` permission; `activeTab` is already there, so no new site access). Chrome pages (`chrome://`, the New Tab page, the Web Store) can't be injected, so the popup also offers **Open test page**: an extension page with a looping test pattern standing in for the video. It has no controls of its own; the popup drives it like any other tab.
+- **Fake source inside `content.js`:** a `sim` object that, while set, stands in for `breakHit()`, `currentRef()`, `serverHealthy()` and the trivia fetch, driven by `kas-sim-*` messages from the popup. The real cover logic (`tick()`, `showOverlay()`, `openOverlay()`, `breakCountdown()`, `updateTrivia()`) runs unchanged, so what you see is what the TV would show.
+- **Fully offline:** test mode never calls the server. Trivia uses a short list of **sample questions built into the extension** (a few with answers, one with none), so nothing is added to `trivia_asked`, `breaks.json` or the logs.
+- **Can't leak into a real game:** test mode is off in Reporter mode, hidden unless debug logging is on, lives only in that tab's memory (gone on reload), and shows a small "TEST" tag on the overlay. Unticking debug logging stops any running test.
+- Update README (new "Test the overlay" section) and SPEC.
+
+**Decisions** (2026-10-25):
+1. Controls live **in the popup**.
+2. Test trivia uses **built-in sample questions**.
+3. No speed control; test breaks are short instead: **break length is a setting, default 15 s**.
+4. The test section shows **only when debug logging is on**.
+

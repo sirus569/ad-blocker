@@ -73,7 +73,7 @@ Change channels on the TV only; the detector follows.
 ## Overlay and trivia
 
 - The cover closes like a curtain over 5 s and opens again so the game is fully back exactly when the break ends (it starts opening 5 s early; the sound comes back at the end). If something goes wrong (server stopped, Stop, Uncover now) it opens in under a second.
-- While covered it shows trivia from **`trivia.json`** (in `app/server/`, next to `server.py`): a question, then the answer 15 s later, a new one every 30 s. Questions don't repeat within a game until all of them have been asked, and the last 4 from this game (with answers) sit as cards along the bottom of the cover. Edit the file any time, no restart needed. Format: `[{"q": "Question?", "a": "Answer"}, {"q": "Open-ended question?"}]` (leave out `"a"` for questions with no right answer).
+- While covered it shows trivia from **`trivia.json`** (in `app/server/`, next to `server.py`): a question, then the answer 15 s later, a new one 6 s after that (21 s a round; 30 s for questions with no right answer, so there's time to talk them over). Questions don't repeat within a game until all of them have been asked, and the last 4 from this game (with answers) sit as cards along the bottom of the cover. Edit the file any time, no restart needed. Format: `[{"q": "Question?", "a": "Answer"}, {"q": "Open-ended question?"}]` (leave out `"a"` for questions with no right answer).
 
 ## Logo templates
 
@@ -108,7 +108,7 @@ python3 app/server/server.py --log-only
 ## Behavior notes
 
 - Covers from break start until 1.5 s before it ends; max 3 min per break (longer breaks leak their tail).
-- The cover shows a countdown, **Back in m:ss**, when the break's end is already known (the usual case with a few minutes of lead), or **Back soon** while it is still being detected. It never counts past the 3-minute cap.
+- On a break cover the moon is the countdown: it starts full and wanes to nothing as the break runs down, with the time left (**m:ss**) in its middle, once the break's end is known (the usual case with a few minutes of lead). While the end is still being detected it is a full, slowly breathing moon saying **Back soon**. If the end is found late, the moon appears partly used up. It never counts past the 3-minute cap. Manual covers show a half moon with no time.
 - Breaks under ~15 s aren't covered (to avoid hiding replays).
 - First ~90 s on a new channel: learning the logo, no covering. If a commercial was playing during that minute, use Relearn.
 - Lead under ~20 s: covering gets less reliable. Pause the TV to rebuild it.
