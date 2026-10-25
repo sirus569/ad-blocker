@@ -212,7 +212,7 @@
       filter: drop-shadow(0 0 3vmin rgba(255, 233, 168, 0.35));
     }
     .moon.counting { animation: none; }
-    .ghost { fill: rgba(255, 233, 168, 0.06); stroke: rgba(255, 233, 168, 0.3); stroke-width: 0.8; }
+    .ghost { fill: rgba(255, 233, 168, 0.06); }
     .lit { fill: #FFE9A8; }
     .craters { fill: rgba(196, 166, 96, 0.32); }
     .mtime {

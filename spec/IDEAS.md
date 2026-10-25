@@ -7,6 +7,7 @@ Ideas to build later. Nothing here is built unless its status says so. When one 
 | 1 | [Control app for non-technical users](#1-control-app-for-non-technical-users) | Planned, waiting on answers | 2026-10-24 |
 | 3 | [Add trivia questions from a phone](#3-add-trivia-questions-from-a-phone) | Idea, needs a spec decision | 2026-10-24 |
 | 5 | [Test the overlay without a live stream](#5-test-the-overlay-without-a-live-stream) | Planned, answers in | 2026-10-25 |
+| 6 | [Uncover button on the cover](#6-uncover-button-on-the-cover) | Planned, answers in | 2026-10-25 |
 
 ---
 
@@ -99,3 +100,24 @@ Ideas to build later. Nothing here is built unless its status says so. When one 
 3. No speed control; test breaks are short instead: **break length is a setting, default 15 s**.
 4. The test section shows **only when debug logging is on**.
 
+---
+
+## 6. Uncover button on the cover
+
+**Goal:** during a break, click a button on the cover itself to uncover, then fast forward through the commercial with YouTube TV's own controls. One click less than opening the extension popup.
+
+**Today:** **Uncover now** exists only in the popup (`kas-uncover-now`): it turns manual off, suppresses the break being covered so it won't re-cover, opens the curtain in 0.6 s and unmutes. While covered, the overlay (top z-index, full screen) hides the player and its controls, so there's nothing to scrub until you uncover.
+
+**Plan:**
+- A small **Uncover now** pill on the cover, in the top right corner (the recap cards use the bottom). Clicking it does exactly what the popup's Uncover now does.
+- It appears only when the mouse moves over the cover and fades out after ~3 s without movement, like video player controls. Kids watching on the TV without the mouse never see it.
+- Then fast forward with YouTube TV's scrubber or keys. If you land in the next break, it covers as usual; going back into the skipped break won't re-cover it (already true for Uncover now).
+- **Spec:** SPEC §1 says the extension never seeks. That still holds: the button only uncovers, and the fast forward is done by you with the player's own controls. Reword the §8 non-goal "skipping or seeking past ads" to say *the extension* doesn't skip or seek.
+- **Lead:** each fast-forwarded break uses up lead equal to the time skipped (lead 4:30, skip a 2:30 break → lead 2:00). At ~0 the TV is at live and nothing gets covered ahead of time. Say so in README.
+- Update README (Behavior notes) and SPEC (popup Uncover now section). Check live: mouse-over shows the button, it hides again, click uncovers, fast forward past the break, next break still covers.
+
+**Decisions** (2026-10-25):
+1. Sound after clicking it on a break cover: **stays muted until the TV passes the break's end** (if the end isn't known yet, until it is known and passed, or the 180 s cap). The player's own volume can still unmute. Manual and label covers unmute right away, as today.
+2. Shown on **all covers** (break, manual, label).
+3. Appears **on mouse movement**, fades after ~3 s idle.
+4. Fast-forwarding under the curtain with YouTube TV's keys: **not pursued**.
