@@ -1,14 +1,15 @@
 // mode and enabled live in storage.local (per Chrome instance): storage.sync
 // would copy the mode between the TV Chrome and the detector Chrome if they
-// share a Google account. message and debug can stay in sync.
+// share a Google account. message, countdown and debug can stay in sync.
 const LOCAL_DEFAULTS = { mode: 'cover', enabled: true, running: false };
-const SYNC_DEFAULTS = { debug: false, message: 'The show will be right back' };
+const SYNC_DEFAULTS = { debug: false, message: 'The show will be right back', countdown: 'random' };
 
 const mode = document.getElementById('mode');
 const modeNote = document.getElementById('modeNote');
 const enabled = document.getElementById('enabled');
 const debug = document.getElementById('debug');
 const message = document.getElementById('message');
+const countdown = document.getElementById('countdown');
 
 const NOTES = {
   cover: 'This Chrome covers and mutes during ad breaks. Use it on the TV.',
@@ -43,12 +44,13 @@ async function tabMsg(type) {
 function describe(reason) {
   if (reason.startsWith('break')) return 'commercial break detected';
   if (reason.startsWith('manual')) return 'covered by hand';
+  if (reason.startsWith('Netflix')) return reason.replace('Netflix ad', 'Netflix ad break, ad');
   return 'ad label on the page';
 }
 async function refreshCoverState(r) {
   if (r === undefined) r = await tabMsg('kas-state');
   coverState.textContent = !r
-    ? 'No Kid Ad Shield on this tab. Open the YouTube TV tab (reload it if the extension was just reloaded).'
+    ? 'No Kid Ad Shield on this tab. Open the YouTube TV or Netflix tab (reload it if the extension was just reloaded).'
     : r.covered ? `Screen is covered: ${describe(r.reason)}.` : 'Screen is not covered.';
 }
 document.getElementById('coverNow').addEventListener('click', async () => refreshCoverState(await tabMsg('kas-cover-now')));
@@ -202,6 +204,7 @@ chrome.storage.local.get(LOCAL_DEFAULTS, (s) => {
 chrome.storage.sync.get(SYNC_DEFAULTS, (s) => {
   debug.checked = s.debug;
   message.value = s.message;
+  countdown.value = s.countdown;
 });
 
 mode.addEventListener('change', () => {
@@ -216,3 +219,4 @@ debug.addEventListener('change', () => chrome.storage.sync.set({ debug: debug.ch
 message.addEventListener('change', () => {
   chrome.storage.sync.set({ message: message.value.trim() || SYNC_DEFAULTS.message });
 });
+countdown.addEventListener('change', () => chrome.storage.sync.set({ countdown: countdown.value }));

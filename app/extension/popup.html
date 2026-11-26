@@ -68,11 +68,22 @@
     Message on screen
     <input type="text" id="message" maxlength="60">
   </div>
+  <div class="field">
+    Countdown on the cover
+    <select id="countdown">
+      <option value="random">A different one each break</option>
+      <option value="moon">Moon</option>
+      <option value="ring">Ring</option>
+      <option value="chicken">Chicken crossing the road</option>
+      <option value="pool">Filling the pool</option>
+      <option value="diaper">Diaper change</option>
+    </select>
+  </div>
   <label><input type="checkbox" id="debug"> Log details to the console</label>
   <div class="help">
     <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> covers or uncovers the screen by hand.<br>
     <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> during an ad lists ad elements in the console.<br>
-    Reload the Prime Video or YouTube TV tab after installing.
+    Reload the Prime Video, Netflix or YouTube TV tab after installing.
   </div>
   <script src="popup.js"></script>
 </body>

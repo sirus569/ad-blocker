@@ -68,7 +68,7 @@ let geo = null;                // what the last crop was computed from (for the 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'capture-start') start(msg.streamId);
   else if (msg.type === 'probe') probe = { ...msg.probe, recv: performance.now() };
-  else if (msg.type === 'relearn') relearn();
+  else if (msg.type === 'relearn') { sendResponse(relearn()); return false; }
   else if (msg.type === 'program') program = msg.name || '';
   else if (msg.type === 'debug-snapshot') { sendResponse(snapshot()); return false; }
   return false;
@@ -224,11 +224,12 @@ async function loadTemplate(name) {
 }
 
 function relearn() {
-  if (!templateName) return;
+  if (!templateName) return { ok: false, why: `nothing to relearn yet: ${idle || 'no template loaded'}` };
   chrome.runtime.sendMessage({ type: 'template-delete', name: templateName }).catch(() => {});
   endSegment('relearn');
   logo = null; learn = null; logoState = 'learning';
   console.log('[Kid Ad Shield] relearning template', templateName);
+  return { ok: true, name: templateName };
 }
 
 function learnFrame(rgba, cw, ch, refAt) {
@@ -282,15 +283,23 @@ function finishLearning() {
 
 // ---------- per-frame work ----------
 
+let idle = 'not started';      // why the last frame was skipped (debug page); '' = it was processed
+let cropAt = 0;                // when the canvas last got a real crop (debug page shows nothing older)
+
 function processFrame() {
   const now = performance.now();
-  if (!track || track.readyState !== 'live' || !video.videoWidth) return;
-  if (!probe || probe.ref == null || now - probe.recv > PROBE_STALE_MS || !probe.rect || !probe.innerW) return;
-  if (probe.paused) { lastRef = lastWall = null; return; } // frozen picture proves nothing
+  idle = '';
+  if (!track) { idle = 'no capture: press Start capture in the popup'; return; }
+  if (track.readyState !== 'live') { idle = 'capture ended: press Start capture in the popup'; return; }
+  if (!video.videoWidth) { idle = 'capture running but no frames yet'; return; }
+  if (!probe || now - probe.recv > PROBE_STALE_MS) { idle = 'no player reading from the tab (reload the YouTube TV tab; it must be in Reporter mode)'; return; }
+  if (probe.ref == null) { idle = 'player gives no usable content timestamp (getMediaReferenceTime), so frames cannot be placed on the timeline'; return; }
+  if (!probe.rect || !probe.innerW) { idle = 'no video element found in the tab'; return; }
+  if (probe.paused) { idle = 'video is paused'; lastRef = lastWall = null; return; } // frozen picture proves nothing
   if (probe.channel && probe.channel !== channel) { setChannel(probe.channel); return; }
-  if (!channel) return;
+  if (!channel) { idle = 'no channel: the tab URL is not /watch/<id>'; return; }
   if (wantedTemplate() !== templateName) { loadTemplate(wantedTemplate()); return; }
-  if (loading) return;
+  if (loading) { idle = 'loading the logo template from the server'; return; }
 
   const wall = Date.now() / 1000;
   const refAt = probe.ref + (wall - probe.wall);
@@ -316,17 +325,18 @@ function processFrame() {
   const ox = (video.videoWidth - probe.innerW * k) / 2, oy = (video.videoHeight - probe.innerH * k) / 2;
   const x = Math.max(0, ox + rx * k), y = Math.max(0, oy + ry * k);
   const w = Math.min(video.videoWidth - x, rw * k), h = Math.min(video.videoHeight - y, rh * k);
-  if (w < 160 || h < 90) return;
+  if (w < 160 || h < 90) { idle = `video too small to analyze (${Math.round(w)}x${Math.round(h)} stream px)`; return; }
   geo = { elem: probe.rect, vw: probe.vw, vh: probe.vh, hasAspect, innerW: probe.innerW, innerH: probe.innerH,
           streamW: video.videoWidth, streamH: video.videoHeight, k, ox, oy, src: { x, y, w, h } };
   const cw = CROP_W, ch = Math.round(CROP_W * h / w);
   if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
   ctx.drawImage(video, x, y, w, h, 0, 0, cw, ch);
+  cropAt = now;
   const rgba = ctx.getImageData(0, 0, cw, ch).data;
-  if (frameSd(rgba) < BLANK_SD) return; // blank frame: neither present nor absent
+  if (frameSd(rgba) < BLANK_SD) { idle = 'frame is blank (all one color)'; return; } // neither present nor absent
 
   if (logoState === 'learning') { learnFrame(rgba, cw, ch, refAt); lastSnap = { edges: [] }; return; }
-  if (logoState !== 'ok' || !logo) return;
+  if (logoState !== 'ok' || !logo) { idle = 'no logo for this template, so nothing is detected'; return; }
   sizeMismatch = logo.cropW !== cw || logo.cropH !== ch;
   if (sizeMismatch) return; // picture shape changed since learning: needs Relearn
 
@@ -445,9 +455,12 @@ function snapshot() {
     inBreak: !!cur, absentRun, presentRun, history, lastRef,
     sizeMismatch, geo,
     learnProgress: logoState === 'learning' && learn && lastRef ? Math.max(0, Math.min(1, (lastRef - learn.startRef) / LEARN_S)) : null,
-    cw: cv.width, ch: cv.height,
+    cw: cv.width, ch: cv.height, idle,
+    probe: probe ? { ageMs: Math.round(performance.now() - probe.recv), channel: probe.channel, path: probe.path,
+                     ref: probe.ref, paused: probe.paused, raw: probe.raw } : null,
+    track: track ? track.readyState : null, streamW: video.videoWidth, streamH: video.videoHeight,
   };
-  if (cv.width > 0) {
+  if (cropAt && performance.now() - cropAt < 3000) { // the canvas holds a recent crop (not a blank default canvas)
     out.frame = cv.toDataURL('image/jpeg', 0.7);
     out.corner = logo ? cornerRect(logo.corner, cv.width, cv.height) : null;
     out.mask = logo ? logo.mask : null;

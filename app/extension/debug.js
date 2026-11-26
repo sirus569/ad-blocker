@@ -6,6 +6,8 @@ const info = document.getElementById('info');
 const fctx = frame.getContext('2d');
 const cctx = corner.getContext('2d');
 
+let relearnMsg = null; // {text, until}
+
 const hms = (s) => {
   if (s == null) return '-';
   const d = new Date(s * 1000);
@@ -39,7 +41,15 @@ async function tick() {
   try { s = await chrome.runtime.sendMessage({ type: 'debug-snapshot' }); } catch (_) { s = null; }
   if (!s) { info.textContent = 'No detector running. In the detector Chrome, open the YouTube TV tab, set Mode = Reporter, press Start capture.'; return; }
   if (s.frame) draw(s);
+  else { fctx.fillStyle = '#000'; fctx.fillRect(0, 0, frame.width, frame.height); }
+  const p = s.probe;
   const lines = [
+    s.idle ? `NOT ANALYZING: ${s.idle}` : 'analyzing frames',
+    relearnMsg && Date.now() < relearnMsg.until ? relearnMsg.text : null,
+    `capture: track ${s.track || 'none'}, stream ${s.streamW}x${s.streamH}`,
+    p ? `player reading (${p.ageMs} ms old): path ${p.path || '?'}  channel ${p.channel || '-'}  ref ${p.ref == null ? 'NONE' : hms(p.ref)}  paused ${p.paused}` : 'player reading: none received',
+    p && p.raw ? `  raw from player: ${JSON.stringify(p.raw)}` : null,
+    '',
     `channel: ${s.channel || '-'}    program: ${s.program || '(none: per channel)'}    template: ${s.templateName || '-'}`,
     `logo state: ${s.logoState}${s.loading ? ' (loading from server)' : ''}`,
     s.learnProgress != null ? `learning: ${Math.round(s.learnProgress * 100)}% (needs about 90 s of normal play, no commercial)` : null,
@@ -57,6 +67,13 @@ async function tick() {
   info.textContent = lines.join('\n');
 }
 
-document.getElementById('relearn').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'relearn' }).catch(() => {}));
+document.getElementById('relearn').addEventListener('click', async () => {
+  let r = null;
+  try { r = await chrome.runtime.sendMessage({ type: 'relearn' }); } catch (_) { /* below */ }
+  const text = !r ? 'Relearn: no detector answered (is capture started?)'
+    : r.ok ? `Relearn: started learning ${r.name} (needs about 90 s of normal play)` : `Relearn did nothing: ${r.why}`;
+  relearnMsg = { text, until: Date.now() + 8000 };
+  tick();
+});
 setInterval(tick, 700);
 tick();

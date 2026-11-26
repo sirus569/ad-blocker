@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Kid Ad Shield",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "minimum_chrome_version": "116",
-  "description": "Covers the screen and mutes the sound during live YouTube TV commercial breaks (and labeled Prime Video ads), then brings the show back.",
+  "description": "Covers the screen and mutes the sound during live YouTube TV commercial breaks (and labeled Prime Video and Netflix ads), then brings the show back.",
   "permissions": [
     "storage",
     "tabCapture",
@@ -19,6 +19,7 @@
       "matches": [
         "https://*.amazon.com/*",
         "https://*.primevideo.com/*",
+        "https://*.netflix.com/*",
         "https://tv.youtube.com/*"
       ],
       "js": [

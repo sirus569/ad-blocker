@@ -7,6 +7,8 @@
 //    detector Chrome. We compare the player's own content timestamp (`ref`,
 //    read by page-probe.js) with them. Everything fails toward NOT covering.
 //  - Prime Video (and YouTube-inserted ads): the player shows an "Ad" label.
+//  - Netflix: the player shows "Ad 1 of 5 · 2:01" (time left in the whole break),
+//    which also drives the moon countdown.
 //
 // If server.py is unreachable, automatic covering stops (only manual works).
 // mode "cover" is the TV Chrome. mode "reporter" (detector Chrome) never covers.
@@ -33,6 +35,7 @@
   const DEFAULTS = {
     debug: false,
     message: 'The show will be right back',
+    countdown: 'random',      // countdown scene: random each cover, or a SCENES name
   };
 
   // Elements Prime Video has used for its ad countdown. Amazon renames these
@@ -129,6 +132,31 @@
     return null;
   }
 
+  // Netflix's ad label (verified 2026-11-25, research/netflix/netflix-log.json):
+  // [data-uia="ads-info-container"] holds "Ad", "1 of 5" and the time left in the
+  // whole break ("2:01", or just "19" under a minute). It exists only during a
+  // break (stays through every ad of it, removed at the end), so being in the
+  // page is enough: it can be invisible for its first second or so (fading in).
+  // No text scan on Netflix: a title starting with "Ad" must never cover.
+  const NETFLIX_AD = '[data-uia="ads-info-container"]';
+  const onNetflix = /(^|\.)netflix\.com$/.test(location.hostname);
+  let nfTime = null;          // last timer text seen
+  let nfTimeAt = 0;           // when it last changed (ms)
+
+  function netflixAd() {
+    const box = document.querySelector(NETFLIX_AD);
+    if (!box || !box.textContent.trim()) { nfTime = null; return null; }
+    const count = (box.querySelector('[data-uia="ads-info-count"]') || {}).textContent || '';
+    const text = ((box.querySelector('[data-uia="ads-info-time"]') || {}).textContent || '').trim();
+    const now = performance.now();
+    if (text !== nfTime) { nfTime = text; nfTimeAt = now; }
+    // The timer shows whole seconds, so count down between its changes, by at
+    // most 1 s (it stops while the video is paused, and so does this).
+    const m = text.match(/^(?:(\d+):)?(\d+)$/);
+    const left = m ? Math.max(0, (+(m[1] || 0)) * 60 + (+m[2]) - Math.min((now - nfTimeAt) / 1000, 1)) : null;
+    return { reason: `Netflix ad ${count.trim()}`.trim(), left };
+  }
+
   // ---------- muting ----------
 
   function muteAll() {
@@ -196,22 +224,54 @@
     .scene.closed .curtain { transform: translateX(0); }
     .content {
       position: absolute; inset: 0;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 3vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+      gap: 3vh; padding-top: 6vh; /* from the top, so trivia and the cards below have room */
       opacity: 0; transition: opacity 0.4s ease;
     }
     /* text appears once the curtain has (nearly) met in the middle */
     .scene.closed .content { opacity: 1; transition: opacity 1s ease var(--cdelay); }
-    /* an SVG moon: half lit (manual/label covers), full ("Back soon") or the break countdown */
-    .moon {
-      width: 22vmin; height: 22vmin; position: relative;
-      animation: breathe 6s ease-in-out infinite;
-    }
-    .moon svg {
+    /* the countdown: one scene per cover (moon, ring, chicken, pool, diaper), see SCENES */
+    .timer { display: flex; flex-direction: column; align-items: center; }
+    .timer.row { flex-direction: row; gap: 3vmin; } /* picture scenes: the time beside them */
+    .art { width: 22vmin; height: 22vmin; position: relative; }
+    .art.wide { width: 56vmin; height: 28vmin; }
+    .art svg {
       position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;
-      filter: drop-shadow(0 0 3vmin rgba(255, 233, 168, 0.35));
+      filter: drop-shadow(0 0 3vmin rgba(255, 233, 168, 0.25));
     }
-    .moon.counting { animation: none; }
+    .breathe { animation: breathe 6s ease-in-out infinite; }
+    .ctime {
+      font-size: clamp(22px, 5vmin, 60px); font-weight: 700; color: #FFE9A8;
+      font-variant-numeric: tabular-nums; min-height: 1.2em;
+    }
+    .cap { font-size: 9px; font-weight: 700; fill: #F7F3D6; text-anchor: middle; }
+    .slide { transition: transform 0.3s linear; }
+    /* ring: drains clockwise from 12 o'clock */
+    .ring-track { fill: none; stroke: rgba(255, 233, 168, 0.12); stroke-width: 7; }
+    .ring-arc { fill: none; stroke: #FFE9A8; stroke-width: 7; stroke-linecap: round;
+                transition: stroke-dashoffset 0.3s linear; }
+    /* chicken: walks (bob + legs) while counting, taps a foot while waiting */
+    .bob { animation: bob 0.5s ease-in-out infinite; }
+    .leg { transform-box: fill-box; transform-origin: 50% 0; }
+    .walking .leg.a { animation: swing 0.5s ease-in-out infinite; }
+    .walking .leg.b { animation: swing 0.5s ease-in-out infinite reverse; }
+    .waiting .bob { animation: none; }
+    .waiting .leg.a { animation: tap 0.8s ease-in-out infinite; }
+    /* pool: the wave slides, drips fall while waiting, the duck bobs */
+    .wave { animation: wave 2s linear infinite; }
+    .wave.back { animation-duration: 3.2s; animation-direction: reverse; opacity: 0.55; }
+    .drip { animation: drip 1.2s ease-in infinite; }
+    .floaty { animation: floaty 2.4s ease-in-out infinite; }
+    /* diaper change: legs kick, stink and powder puff, hearts float up */
+    .kick { transform-box: fill-box; transform-origin: 0 50%; animation: kick 0.9s ease-in-out infinite; }
+    .kick.b { animation-delay: -0.45s; }
+    .stink { animation: rise 1.6s ease-out infinite; }
+    .stink.b { animation-delay: -0.55s; } .stink.c { animation-delay: -1.1s; }
+    .wipe { animation: wipe 0.6s ease-in-out infinite alternate; }
+    .puff { transform-box: fill-box; transform-origin: center; animation: puff 1.2s ease-out infinite; }
+    .heart { animation: rise 2s ease-out infinite; }
+    .heart.b { animation-delay: -1s; }
+    .tear { animation: drip 0.9s ease-in infinite; }
     .ghost { fill: rgba(255, 233, 168, 0.06); }
     .lit { fill: #FFE9A8; }
     .craters { fill: rgba(196, 166, 96, 0.32); }
@@ -258,8 +318,19 @@
       0%, 100% { transform: scale(1); }
       50% { transform: scale(1.05); }
     }
+    @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
+    @keyframes swing { 0%, 100% { transform: rotate(-22deg); } 50% { transform: rotate(22deg); } }
+    @keyframes tap { 0%, 60%, 100% { transform: rotate(0); } 30% { transform: rotate(-35deg); } }
+    @keyframes wave { from { transform: translateX(0); } to { transform: translateX(-20px); } }
+    @keyframes drip { from { transform: translateY(0); opacity: 1; } to { transform: translateY(var(--fall, 60px)); opacity: 0.2; } }
+    @keyframes floaty { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-1.5px) rotate(3deg); } }
+    @keyframes kick { 0%, 100% { transform: rotate(-18deg); } 50% { transform: rotate(14deg); } }
+    @keyframes rise { from { transform: translateY(0); opacity: 0.9; } to { transform: translateY(-14px); opacity: 0; } }
+    @keyframes wipe { from { transform: translateX(-4px); } to { transform: translateX(4px); } }
+    @keyframes puff { 0% { transform: scale(0.5); opacity: 1; } 60% { transform: scale(1.15); opacity: 0.9; }
+                      100% { transform: scale(1.4); opacity: 0; } }
     @media (prefers-reduced-motion: reduce) {
-      .moon { animation: none; }
+      .art, .art * { animation: none !important; }
     }
   `;
 
@@ -305,25 +376,8 @@
       content.appendChild(s);
     }
 
-    const moon = document.createElement('div');
-    moon.className = 'moon';
-    // The moon. Its time is drawn twice: yellow over the dark part, and navy
-    // clipped to the lit part, so it reads at every phase.
-    const svg = svgEl('svg', { viewBox: '-50 -50 100 100' });
-    const clip = svgEl('clipPath', { id: 'kas-lit' });
-    clip.appendChild(svgEl('path', { class: 'lit-shape', transform: MOON_TILT }));
-    // Spots fixed on the moon's face; the shadow passes over them.
-    const craters = svgEl('g', { class: 'craters', 'clip-path': 'url(#kas-lit)' });
-    for (const [cx, cy, r] of CRATERS) craters.appendChild(svgEl('circle', { cx, cy, r }));
-    const defs = svgEl('defs', {});
-    defs.appendChild(clip);
-    svg.append(defs,
-      svgEl('circle', { class: 'ghost', r: MOON_R }),
-      svgEl('path', { class: 'lit lit-shape', transform: MOON_TILT }),
-      craters,
-      svgEl('text', { class: 'mtime on-dark' }),
-      svgEl('text', { class: 'mtime on-lit', 'clip-path': 'url(#kas-lit)' }));
-    moon.appendChild(svg);
+    const timer = document.createElement('div');
+    timer.className = 'timer'; // filled by mountScene() at the start of each cover
 
     const msg = document.createElement('div');
     msg.className = 'msg';
@@ -344,7 +398,7 @@
     const recap = document.createElement('div');
     recap.className = 'recap';
 
-    content.append(moon, msg, sub, trivia, recap);
+    content.append(timer, msg, sub, trivia, recap);
     scene.append(left, right, content);
     root.append(style, scene);
   }
@@ -359,6 +413,7 @@
   // Close the curtain (or keep it closed). Called every tick while covered.
   function showOverlay() {
     if (!host) buildOverlay();
+    if (!host.parentNode) mountScene(pickScene()); // a new cover gets its own countdown scene
     const parent = overlayParent();
     if (host.parentNode !== parent) parent.appendChild(host);
     if (openTimer) { clearTimeout(openTimer); openTimer = null; }
@@ -434,22 +489,273 @@
     }));
   }
 
-  // The moon: half lit with no time (m null: manual and label covers), full and
-  // saying "Back soon" while a break's end is unknown, or waning with the time
-  // left shown as m:ss.
-  function setMoon(m) {
-    if (!host) return;
-    const root = host.shadowRoot;
-    const moon = root.querySelector('.moon');
-    moon.classList.toggle('soon', !!m && !!m.soon);
-    moon.classList.toggle('counting', !!m && !m.soon);
-    const f = !m ? 0.5 : m.soon ? 1 : Math.min(1, Math.max(0, m.frac));
-    const d = litPath(f);
-    for (const p of root.querySelectorAll('.lit-shape')) {
-      if (p.getAttribute('d') !== d) p.setAttribute('d', d);
-    }
-    const lines = !m ? [] : m.soon ? ['Back', 'soon'] : [mmss(m.left)];
-    for (const t of root.querySelectorAll('.mtime')) setMoonText(t, lines);
+  // ---------- countdown scenes ----------
+  // Each cover shows one scene, picked at random (never the same twice in a row)
+  // unless the popup pins one. A scene's draw(m) runs every tick with
+  //   m = null            no time (manual and label covers): a waiting loop
+  //   m = {soon: true}    a break whose end isn't known yet: waiting, "Back soon"
+  //   m = {left, frac}    counting: seconds left, fraction of the cover still to go
+  // so the picture reaches its end (chicken home, pool full, clean diaper) as the
+  // time runs out.
+
+  const clamp01 = (x) => Math.min(1, Math.max(0, x));
+  const waiting = (m) => !m || !!m.soon;
+  const progress = (m) => (waiting(m) ? 0 : 1 - clamp01(m.frac)); // 0 at the start, 1 at the end
+  const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+
+  function setText(el, s) { if (el.textContent !== s) el.textContent = s; }
+  function g(attrs, ...kids) { const e = svgEl('g', attrs); e.append(...kids); return e; }
+  function caption() { return svgEl('text', { class: 'cap', x: 100, y: 12 }); }
+
+  // The moon: half lit with no time, full and "Back soon" while a break's end is
+  // unknown, or waning with the time left as m:ss. Its time is drawn twice:
+  // yellow over the dark part, and navy clipped to the lit part, so it reads at
+  // every phase.
+  function buildMoon(art) {
+    const svg = svgEl('svg', { viewBox: '-50 -50 100 100' });
+    const clip = svgEl('clipPath', { id: 'kas-lit' });
+    clip.appendChild(svgEl('path', { class: 'lit-shape', transform: MOON_TILT }));
+    // Spots fixed on the moon's face; the shadow passes over them.
+    const craters = g({ class: 'craters', 'clip-path': 'url(#kas-lit)' });
+    for (const [cx, cy, r] of CRATERS) craters.appendChild(svgEl('circle', { cx, cy, r }));
+    svg.append(g({}, clip),
+      svgEl('circle', { class: 'ghost', r: MOON_R }),
+      svgEl('path', { class: 'lit lit-shape', transform: MOON_TILT }),
+      craters,
+      svgEl('text', { class: 'mtime on-dark' }),
+      svgEl('text', { class: 'mtime on-lit', 'clip-path': 'url(#kas-lit)' }));
+    art.appendChild(svg);
+    return (m) => {
+      art.classList.toggle('soon', !!m && !!m.soon);
+      art.classList.toggle('breathe', waiting(m)); // holds still while counting so the numbers are steady
+      const d = litPath(!m ? 0.5 : m.soon ? 1 : clamp01(m.frac));
+      for (const p of art.querySelectorAll('.lit-shape')) {
+        if (p.getAttribute('d') !== d) p.setAttribute('d', d);
+      }
+      const lines = !m ? [] : m.soon ? ['Back', 'soon'] : [mmss(m.left)];
+      for (const t of art.querySelectorAll('.mtime')) setMoonText(t, lines);
+    };
+  }
+
+  // A ring that drains clockwise from 12 o'clock around the time left.
+  function buildRing(art) {
+    const C = 2 * Math.PI * 42;
+    const arc = svgEl('circle', { class: 'ring-arc', r: 42, transform: 'rotate(-90)', 'stroke-dasharray': `${C} ${C}` });
+    const text = svgEl('text', { class: 'mtime on-dark' });
+    const svg = svgEl('svg', { viewBox: '-50 -50 100 100' });
+    svg.append(svgEl('circle', { class: 'ring-track', r: 42 }), arc, text);
+    art.appendChild(svg);
+    return (m) => {
+      art.classList.toggle('soon', !!m && !!m.soon);
+      art.classList.toggle('breathe', waiting(m));
+      // A negative offset moves the arc's start along, so the gap grows from 12 o'clock.
+      arc.style.strokeDashoffset = String(-C * (waiting(m) ? 0 : 1 - clamp01(m.frac)));
+      setMoonText(text, !m ? [] : m.soon ? ['Back', 'soon'] : [mmss(m.left)]);
+    };
+  }
+
+  // Why did the chicken cross the road? It walks from the left verge to its
+  // coop on the far side; while waiting it taps a foot at the curb.
+  function buildChicken(art) {
+    art.classList.add('wide');
+    const leg = (cls, x) => svgEl('line', { class: `leg ${cls}`, x1: x, y1: 8, x2: x * 1.3, y2: 16,
+      stroke: '#F5A524', 'stroke-width': 1.8, 'stroke-linecap': 'round' });
+    const bird = g({ class: 'bob' },
+      svgEl('polygon', { points: '-11,-3 -18,-11 -15,1', fill: '#EDE3CC' }),          // tail
+      svgEl('ellipse', { rx: 12, ry: 10, fill: '#FFF8E7' }),                           // body
+      svgEl('ellipse', { cx: -2, cy: 1, rx: 7, ry: 4.5, fill: '#EDE3CC' }),            // wing
+      svgEl('circle', { cx: 9, cy: -10, r: 6.5, fill: '#FFF8E7' }),                    // head
+      svgEl('circle', { cx: 6.5, cy: -16.5, r: 2.4, fill: '#E5484D' }),                // comb
+      svgEl('circle', { cx: 9.5, cy: -17.5, r: 2.4, fill: '#E5484D' }),
+      svgEl('circle', { cx: 12.3, cy: -16, r: 2, fill: '#E5484D' }),
+      svgEl('polygon', { points: '15,-11.5 20.5,-9.5 15,-7.5', fill: '#F5A524' }),     // beak
+      svgEl('ellipse', { cx: 15, cy: -6, rx: 1.4, ry: 2.2, fill: '#E5484D' }),         // wattle
+      svgEl('circle', { cx: 11, cy: -11.5, r: 1.2, fill: '#1B2552' }));                // eye
+    const chicken = g({ class: 'slide' }, leg('a', -3), leg('b', 3), bird);
+    chicken.style.transform = 'translate(30px, 62px)';
+    const cap = caption();
+    const svg = svgEl('svg', { viewBox: '0 0 200 100' });
+    svg.append(
+      svgEl('rect', { x: 0, y: 26, width: 66, height: 68, rx: 6, fill: '#2F5E46' }),   // near verge
+      svgEl('rect', { x: 134, y: 26, width: 66, height: 68, rx: 6, fill: '#2F5E46' }), // far verge
+      svgEl('rect', { x: 62, y: 26, width: 76, height: 68, fill: '#2B3150' }),         // road
+      svgEl('line', { x1: 63, y1: 26, x2: 63, y2: 94, stroke: '#8D95B8', 'stroke-width': 1 }),
+      svgEl('line', { x1: 137, y1: 26, x2: 137, y2: 94, stroke: '#8D95B8', 'stroke-width': 1 }),
+      svgEl('line', { x1: 100, y1: 28, x2: 100, y2: 94, stroke: '#FFE9A8', 'stroke-width': 1.6, 'stroke-dasharray': '6 5' }),
+      svgEl('circle', { cx: 14, cy: 86, r: 2, fill: '#FFE9A8' }),                      // flowers
+      svgEl('circle', { cx: 44, cy: 34, r: 1.6, fill: '#F49AA8' }),
+      svgEl('circle', { cx: 160, cy: 86, r: 1.8, fill: '#FFE9A8' }),
+      g({ transform: 'translate(178 46)' },                                            // coop
+        svgEl('rect', { x: -12, y: -6, width: 24, height: 20, rx: 1.5, fill: '#B5523B' }),
+        svgEl('polygon', { points: '-15,-6 0,-18 15,-6', fill: '#7A2E22' }),
+        svgEl('path', { d: 'M -4 14 V 6 A 4 4 0 0 1 4 6 V 14 Z', fill: '#2A1A1A' })),
+      chicken, cap);
+    art.appendChild(svg);
+    return (m) => {
+      const p = progress(m);
+      chicken.style.transform = `translate(${30 + p * 122}px, 62px)`;
+      svg.classList.toggle('waiting', waiting(m));
+      svg.classList.toggle('walking', !waiting(m) && p < 1);
+      setText(cap, !waiting(m) && p >= 0.9 ? 'To get to the other side!' : 'Why did the chicken cross the road?');
+    };
+  }
+
+  // A pool fills from a tap while a rubber duck rides the water up. While
+  // waiting the tap drips and the duck sits on the empty pool's floor.
+  function buildPool(art) {
+    art.classList.add('wide');
+    const TOP = 40, BOTTOM = 88, L = 30, R = 170;
+    // A wave 20 units long, repeated; sliding it by one wavelength loops seamlessly.
+    const wave = (cls, amp) => {
+      let d = `M ${L - 20} 0 Q ${L - 15} ${-amp} ${L - 10} 0`;
+      for (let x = L; x <= R + 20; x += 10) d += ` T ${x} 0`;
+      return svgEl('path', { class: cls, d: `${d} V ${BOTTOM - TOP + 4} H ${L - 20} Z`, fill: '#5BB8E8' });
+    };
+    const water = g({ class: 'slide' }, wave('wave back', 2), wave('wave', 1.5));
+    const clip = svgEl('clipPath', { id: 'kas-pool' });
+    clip.appendChild(svgEl('rect', { x: L, y: TOP, width: R - L, height: BOTTOM - TOP }));
+    const stream = svgEl('rect', { x: 34.5, y: 26, width: 3, height: 0, fill: '#8FD3F5', opacity: 0.85 });
+    const drip = svgEl('circle', { class: 'drip', cx: 36, cy: 28, r: 1.6, fill: '#8FD3F5' });
+    drip.style.setProperty('--fall', `${BOTTOM - 30}px`);
+    const duck = g({ class: 'slide' }, g({ class: 'floaty' },
+      svgEl('polygon', { points: '-8,-2 -12,-7 -6,-4', fill: '#FFD43B' }),
+      svgEl('ellipse', { rx: 9, ry: 6, fill: '#FFD43B' }),
+      svgEl('ellipse', { cx: -1, cy: 0, rx: 4.5, ry: 3, fill: '#F2C12E' }),
+      svgEl('circle', { cx: 6, cy: -7, r: 4.6, fill: '#FFD43B' }),
+      svgEl('polygon', { points: '10,-7.5 14,-6.5 10,-5.5', fill: '#F5A524' }),
+      svgEl('circle', { cx: 7.2, cy: -8.2, r: 0.9, fill: '#1B2552' })));
+    duck.style.transform = `translate(118px, ${BOTTOM - 3}px)`;
+    water.style.transform = `translate(0px, ${BOTTOM}px)`;
+    const tiles = g({ stroke: 'rgba(159, 183, 230, 0.15)', 'stroke-width': 1 });
+    for (let x = L + 20; x < R; x += 20) tiles.appendChild(svgEl('line', { x1: x, y1: TOP, x2: x, y2: BOTTOM }));
+    const cap = caption();
+    const svg = svgEl('svg', { viewBox: '0 0 200 100' });
+    svg.append(g({}, clip),
+      svgEl('rect', { x: L, y: TOP, width: R - L, height: BOTTOM - TOP, fill: '#1E2A5A' }),
+      tiles,
+      g({ 'clip-path': 'url(#kas-pool)' }, water),
+      svgEl('rect', { x: L, y: TOP, width: R - L, height: BOTTOM - TOP, fill: 'none', stroke: '#9FB7E6', 'stroke-width': 2 }),
+      svgEl('rect', { x: 8, y: 36, width: 22, height: 5, rx: 2, fill: '#C9BFA5' }),    // deck
+      svgEl('rect', { x: 170, y: 36, width: 22, height: 5, rx: 2, fill: '#C9BFA5' }),
+      g({ stroke: '#C9D3EE', 'stroke-width': 1.5, fill: 'none' },                    // ladder
+        svgEl('path', { d: 'M 156 30 V 64 M 163 30 V 64 M 156 42 H 163 M 156 50 H 163 M 156 58 H 163' })),
+      svgEl('path', { d: 'M 4 14 H 36 V 24', stroke: '#9AA3C7', 'stroke-width': 4, fill: 'none', 'stroke-linecap': 'round' }),
+      svgEl('circle', { cx: 14, cy: 9, r: 3, fill: '#E5484D' }),                         // tap
+      stream, drip, duck, cap);
+    art.appendChild(svg);
+    return (m) => {
+      const p = progress(m);
+      const top = BOTTOM - (BOTTOM - TOP) * p;
+      water.style.transform = `translate(0px, ${top}px)`;
+      duck.style.transform = `translate(118px, ${top - 3}px)`;
+      stream.setAttribute('height', String(Math.max(0, top - 26)));
+      show(stream, !waiting(m) && p < 1);
+      show(drip, waiting(m));
+      setText(cap, waiting(m) ? 'Drip, drip...' : p >= 0.85 ? 'Splash time!' : 'Filling the pool...');
+    };
+  }
+
+  // A baby on a changing table: stinky diaper, wipes, powder puff, clean diaper,
+  // a quarter of the time each. While waiting the baby just kicks, all clean.
+  function buildDiaper(art) {
+    art.classList.add('wide');
+    const SKIN = '#F6C9A0', INK = '#5A3A2A';
+    const line = (d) => svgEl('path', { d, stroke: INK, 'stroke-width': 1.2, fill: 'none', 'stroke-linecap': 'round' });
+    const legAt = (cls, angle) => g({ transform: `translate(117 54) rotate(${angle})` }, g({ class: `kick ${cls}` },
+      svgEl('rect', { x: 0, y: -2.8, width: 15, height: 5.6, rx: 2.8, fill: SKIN }),
+      svgEl('circle', { cx: 15, cy: 0, r: 3.2, fill: SKIN })));
+    const cry = g({},
+      line('M 59 46.5 l 3 1.5 l -3 1.5'), line('M 69 46.5 l -3 1.5 l 3 1.5'),
+      svgEl('ellipse', { cx: 64, cy: 55, rx: 3, ry: 2.6, fill: '#7A2E22' }),
+      svgEl('circle', { class: 'tear', cx: 57, cy: 51, r: 1.2, fill: '#8FD3F5' }),
+      svgEl('circle', { class: 'tear', cx: 71, cy: 51, r: 1.2, fill: '#8FD3F5' }));
+    for (const t of cry.querySelectorAll('.tear')) t.style.setProperty('--fall', '8px');
+    const calm = g({},
+      svgEl('circle', { cx: 60, cy: 48, r: 1.3, fill: INK }), svgEl('circle', { cx: 68, cy: 48, r: 1.3, fill: INK }),
+      line('M 62 54.5 q 2 1.2 4 0'));
+    const happy = g({},
+      line('M 58.5 48.5 q 1.5 -2.5 3 0'), line('M 66.5 48.5 q 1.5 -2.5 3 0'),
+      svgEl('path', { d: 'M 60 53 q 4 5 8 0 Z', fill: '#7A2E22' }),
+      svgEl('circle', { cx: 57.5, cy: 52.5, r: 1.8, fill: '#F49AA8', opacity: 0.7 }),
+      svgEl('circle', { cx: 70.5, cy: 52.5, r: 1.8, fill: '#F49AA8', opacity: 0.7 }));
+    const oldDiaper = svgEl('ellipse', { cx: 113, cy: 55, rx: 8, ry: 8, fill: '#D9C27A' });
+    const newDiaper = g({}, svgEl('ellipse', { cx: 113, cy: 55, rx: 8, ry: 8, fill: '#FFFFFF' }),
+      svgEl('rect', { x: 109, y: 48.5, width: 4, height: 3, rx: 1, fill: '#7FB3E6' }));
+    const stinkLine = (cls, x) => svgEl('path', { class: `stink ${cls}`, d: `M ${x} 44 q -2 -3 0 -6 q 2 -3 0 -6`,
+      stroke: '#8FD18A', 'stroke-width': 1.6, fill: 'none', 'stroke-linecap': 'round' });
+    const stink = g({}, stinkLine('a', 106), stinkLine('b', 113), stinkLine('c', 120));
+    const wipe = svgEl('rect', { class: 'wipe', x: 117, y: 47, width: 9, height: 7, rx: 1.5, fill: '#F7F3D6' });
+    const puff = g({},
+      g({ transform: 'rotate(35 125 33)' },                                              // powder bottle
+        svgEl('rect', { x: 121.5, y: 28, width: 7, height: 11, rx: 2, fill: '#F7F3D6' }),
+        svgEl('rect', { x: 122.5, y: 25.5, width: 5, height: 3, rx: 1, fill: '#7FB3E6' })),
+      g({ class: 'puff' },
+        svgEl('circle', { cx: 116, cy: 49, r: 4, fill: '#FFFFFF' }),
+        svgEl('circle', { cx: 122, cy: 46, r: 3, fill: '#FFFFFF' }),
+        svgEl('circle', { cx: 110, cy: 46, r: 3, fill: '#FFFFFF' })));
+    const heart = (cls, x, y) => g({ transform: `translate(${x} ${y})` },
+      svgEl('path', { class: `heart ${cls}`, d: 'M 0 4 C -6 0 -3 -5 0 -2 C 3 -5 6 0 0 4 Z', fill: '#E5484D' }));
+    const hearts = g({}, heart('a', 88, 36), heart('b', 102, 32));
+    const cap = caption();
+    const svg = svgEl('svg', { viewBox: '0 0 200 100' });
+    svg.append(
+      svgEl('rect', { x: 44, y: 75, width: 5, height: 18, fill: '#A8743F' }),            // table
+      svgEl('rect', { x: 151, y: 75, width: 5, height: 18, fill: '#A8743F' }),
+      svgEl('rect', { x: 36, y: 69, width: 128, height: 6, rx: 2, fill: '#C98F5B' }),
+      svgEl('rect', { x: 40, y: 62, width: 120, height: 7, rx: 3.5, fill: '#9EC9E8' }),
+      legAt('a', -25), legAt('b', 5),
+      svgEl('ellipse', { cx: 92, cy: 54, rx: 19, ry: 9, fill: '#FBE7A1' }),             // onesie
+      svgEl('ellipse', { cx: 86, cy: 45, rx: 2.8, ry: 5.5, fill: SKIN, transform: 'rotate(-30 86 45)' }),
+      svgEl('ellipse', { cx: 114, cy: 55, rx: 7, ry: 7, fill: SKIN }),                   // hips
+      oldDiaper, newDiaper, wipe, puff, stink,
+      svgEl('circle', { cx: 64, cy: 50, r: 11, fill: SKIN }),                            // head
+      svgEl('path', { d: 'M 57 42 q 4 -6 9 -2', stroke: '#8A5A3C', 'stroke-width': 2, fill: 'none', 'stroke-linecap': 'round' }),
+      cry, calm, happy, hearts, cap);
+    art.appendChild(svg);
+    const CAPS = ['Uh oh! Stinky diaper!', 'Wipe, wipe, wipe!', 'Powder puff!', 'All clean!'];
+    return (m) => {
+      const stage = waiting(m) ? -1 : Math.min(3, Math.floor(progress(m) * 4));
+      show(oldDiaper, stage === 0); show(stink, stage === 0); show(cry, stage === 0);
+      show(wipe, stage === 1); show(puff, stage === 2); show(calm, stage === 1 || stage === 2);
+      const clean = stage === 3 || stage === -1;
+      show(newDiaper, clean); show(happy, clean); show(hearts, stage === 3);
+      setText(cap, stage < 0 ? 'Wiggle, wiggle!' : CAPS[stage]);
+    };
+  }
+
+  const SCENES = { moon: buildMoon, ring: buildRing, chicken: buildChicken, pool: buildPool, diaper: buildDiaper };
+  let sceneName = '';         // the countdown scene on the cover now (or last)
+  let drawScene = null;       // its draw(m)
+
+  function pickScene() {
+    const names = Object.keys(SCENES);
+    if (names.includes(settings.countdown)) return settings.countdown; // pinned in the popup
+    const others = names.filter((n) => n !== sceneName);
+    return others[Math.floor(Math.random() * others.length)];
+  }
+
+  function mountScene(name) {
+    const timer = host.shadowRoot.querySelector('.timer');
+    const art = document.createElement('div');
+    art.className = 'art';
+    timer.replaceChildren(art);
+    const draw = SCENES[name](art);
+    sceneName = name;
+    // Moon and ring show their time inside; the picture scenes show it beside them.
+    const time = document.createElement('div');
+    time.className = 'ctime';
+    const wide = art.classList.contains('wide');
+    timer.classList.toggle('row', wide);
+    if (wide) timer.appendChild(time);
+    drawScene = (m) => {
+      draw(m);
+      setText(time, !m ? '' : m.soon ? 'Back soon' : mmss(m.left));
+    };
+    log('countdown scene:', name);
+  }
+
+  function setCountdown(m) {
+    if (host && drawScene) drawScene(m);
   }
 
   const mmss = (sec) => {
@@ -476,6 +782,15 @@
     const left = secondsUntilUncover(b);
     if (moonTotal == null) moonTotal = (performance.now() - breakCoverStart) / 1000 + left;
     return { left, frac: moonTotal > 0 ? left / moonTotal : 0 };
+  }
+
+  // The same for a labeled ad that shows its time left (Netflix).
+  let labelStart = 0;         // when the current label cover began (ms), 0 = none
+  let labelTotal = null;      // s from then to its end, once the time left is known
+
+  function labelCountdown(left) {
+    if (labelTotal == null) labelTotal = (performance.now() - labelStart) / 1000 + left;
+    return { left, frac: labelTotal > 0 ? left / labelTotal : 0 };
   }
 
   // ---------- trivia (from server.py's /trivia; some questions have no answer) ----------
@@ -559,7 +874,8 @@
     if (settings.mode === 'reporter') {
       sendToBackground({ type: 'probe', probe: { channel: channelId(), ref: probe.ref, wall: probe.wall,
         paused: probe.paused, rect: probe.rect, vw: probe.vw, vh: probe.vh,
-        innerW: probe.innerW, innerH: probe.innerH } }, () => {});
+        innerW: probe.innerW, innerH: probe.innerH,
+        raw: probe.raw, path: location.pathname } }, () => {}); // raw + path: debug page only
     }
   });
 
@@ -713,13 +1029,22 @@
         planned = secondsUntilUncover(hit);
       } else {
         breakCoverId = null;
-        const label = detectAd();
+        const nf = onNetflix ? netflixAd() : null;
+        const label = onNetflix ? nf && nf.reason : detectAd();
         if (!label) labelDismissed = false;
-        else if (!labelDismissed) { kind = 'label'; reason = label; }
+        else if (!labelDismissed) {
+          kind = 'label'; reason = label;
+          if (!labelStart) labelStart = performance.now();
+          if (nf && nf.left != null) {
+            moon = labelCountdown(nf.left);
+            planned = nf.left; // the curtain opens as the break's own timer runs out
+          }
+        }
       }
     } else {
       breakCoverId = null;
     }
+    if (kind !== 'label') { labelStart = 0; labelTotal = null; }
 
     if (kind) {
       clearCount = 0;
@@ -734,7 +1059,7 @@
       } else {
         cover(reason);
       }
-      setMoon(moon);
+      setCountdown(moon);
       updateTrivia();
     } else if (covered) {
       // Labels flicker, so they get a short grace period. Breaks and a dead

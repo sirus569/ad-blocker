@@ -1,6 +1,6 @@
 # Kid Ad Shield: ideas (running list)
 
-Ideas to build later. Nothing here is built unless its status says so. When one is built, move what it does into `SPEC.md` and remove it from here. Numbers stay fixed, so a gap is an idea that has been built (2: shorter trivia rounds, 4: moon countdown; both in `SPEC.md`).
+Ideas to build later. Nothing here is built unless its status says so. When one is built, move what it does into `SPEC.md` and remove it from here. Numbers stay fixed, so a gap is an idea that has been built (2: shorter trivia rounds, 4: moon countdown, 7: countdown ring and scenes; all in `SPEC.md`).
 
 | # | Idea | Status | Added |
 |---|---|---|---|

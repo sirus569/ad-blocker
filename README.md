@@ -1,6 +1,6 @@
 # Kid Ad Shield
 
-Covers the TV and mutes it during commercials in live YouTube TV (and labeled ads on Prime Video). Never skips ads. When unsure, it shows the game.
+Covers the TV and mutes it during commercials in live YouTube TV (and labeled ads on Prime Video and Netflix). Never skips ads. When unsure, it shows the game.
 
 ## How it works
 
@@ -73,7 +73,25 @@ Change channels on the TV only; the detector follows.
 ## Overlay and trivia
 
 - The cover closes like a curtain over 5 s and opens again so the game is fully back exactly when the break ends (it starts opening 5 s early; the sound comes back at the end). If something goes wrong (server stopped, Stop, Uncover now) it opens in under a second.
+- **Countdown:** each cover shows one of five, a different one each break (never the same twice in a row), or the one picked under **Countdown on the cover** in the TV Chrome popup:
+  - **Moon:** wanes from full to nothing, time in its middle.
+  - **Ring:** drains clockwise from 12 o'clock around the time.
+  - **Chicken crossing the road:** walks from the curb to its coop on the far side ("Why did the chicken cross the road?" ... "To get to the other side!").
+  - **Filling the pool:** a tap fills the pool and a rubber duck rides the water up.
+  - **Diaper change:** stinky diaper, wipes, powder puff, then a clean, happy baby, a quarter of the time each.
+
+  The picture scenes show the time (**m:ss**) beside them. With no time to count (manual cover, Prime Video labels, or a break whose end isn't known yet) the scene waits: half moon, full breathing ring, chicken tapping its foot at the curb, tap dripping into the empty pool, baby kicking in a clean diaper; break covers add **Back soon**.
 - While covered it shows trivia from **`trivia.json`** (in `app/server/`, next to `server.py`): a question, then the answer 15 s later, a new one 6 s after that (21 s a round; 30 s for questions with no right answer, so there's time to talk them over). Questions don't repeat within a game until all of them have been asked, and the last 4 from this game (with answers) sit as cards along the bottom of the cover. Edit the file any time, no restart needed. Format: `[{"q": "Question?", "a": "Answer"}, {"q": "Open-ended question?"}]` (leave out `"a"` for questions with no right answer).
+
+## Netflix
+
+Netflix shows its own ad label ("Ad 1 of 5 · 2:01", top right), so it needs only the TV Chrome and `server.py`: no detector Chrome, no lead, no logo.
+
+1. `python3 app/server/server.py` (the kill switch works here too: no server, no covering).
+2. Open Netflix in the TV Chrome (extension in **Cover** mode; reload the Netflix tab after installing or reloading the extension), open the popup and press **Start**.
+3. Play. When a break starts the screen covers and mutes; the countdown (see [Overlay and trivia](#overlay-and-trivia)) runs down the time left in the whole break (Netflix's own timer), the curtain starts opening 5 s before the end, and the sound returns when Netflix removes the label.
+
+The first few seconds of each break show through the closing curtain (muted), and the last few through the opening one. Pausing during a break holds the countdown. **Uncover now** keeps the screen open until that break ends. If Netflix renames its label, nothing covers (ads show); check with `research/netflix/netflix-ad-recorder.js` (instructions at its top).
 
 ## Logo templates
 
@@ -108,7 +126,7 @@ python3 app/server/server.py --log-only
 ## Behavior notes
 
 - Covers from break start until 1.5 s before it ends; max 3 min per break (longer breaks leak their tail).
-- On a break cover the moon is the countdown: it starts full and wanes to nothing as the break runs down, with the time left (**m:ss**) in its middle, once the break's end is known (the usual case with a few minutes of lead). While the end is still being detected it is a full, slowly breathing moon saying **Back soon**. If the end is found late, the moon appears partly used up. It never counts past the 3-minute cap. Manual covers show a half moon with no time.
+- On a break cover the countdown (moon, ring or scene) runs from the start of the cover to its end once the break's end is known (the usual case with a few minutes of lead). While the end is still being detected it waits and says **Back soon**. If the end is found late, it starts partly used up. It never counts past the 3-minute cap. Manual covers wait with no time.
 - Breaks under ~15 s aren't covered (to avoid hiding replays).
 - First ~90 s on a new channel: learning the logo, no covering. If a commercial was playing during that minute, use Relearn.
 - Lead under ~20 s: covering gets less reliable. Pause the TV to rebuild it.
@@ -118,6 +136,7 @@ python3 app/server/server.py --log-only
 
 | Symptom | Check |
 |---|---|
+| Netflix never covers | Popup on the Netflix tab says "Screen is not covered" during an ad? Pressed **Start**? Server running? Reloaded the tab after loading the extension? If all yes, Netflix may have renamed its label: run `research/netflix/netflix-ad-recorder.js` during a break. |
 | `tv ✗` | TV tab open on tv.youtube.com? Mode = Cover? Reload tab after extension reloads. |
 | `detector ✗` | Detector Chrome open and playing? Mode = Reporter? Badge says OK? If not, click the icon to restart capture. |
 | `logo none` / `logo learning` | Wait ~90 s. If it stays `none`, open the debug page and check the mask; try Relearn during normal play. |

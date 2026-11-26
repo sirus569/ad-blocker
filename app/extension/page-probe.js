@@ -31,7 +31,8 @@
   function read() {
     const out = { ref: null, at_live: null, paused: null, rect: null,
                   innerW: window.innerWidth, innerH: window.innerHeight,
-                  wall: Date.now() / 1000 };
+                  wall: Date.now() / 1000,
+                  raw: {} }; // unfiltered player values, shown on the detector debug page
     try {
       const player = findPlayer();
       const video = findVideo();
@@ -41,15 +42,41 @@
         out.vw = video.videoWidth;   // the picture's own size, to find it inside the element
         out.vh = video.videoHeight;
         out.rect = { x: r.x, y: r.y, w: r.width, h: r.height };
+        out.raw.currentTime = video.currentTime;
+        out.raw.duration = Number.isFinite(video.duration) ? video.duration : String(video.duration);
       }
+      out.raw.player = !!player;
+      out.raw.hasRefApi = !!player && typeof player.getMediaReferenceTime === 'function';
       if (player && typeof player.getMediaReferenceTime === 'function') {
         const ref = player.getMediaReferenceTime();
+        out.raw.ref = typeof ref === 'number' && Number.isFinite(ref) ? ref : String(ref);
         // Unix seconds; anything else (0, NaN, tiny numbers) means "not ready".
         if (typeof ref === 'number' && Number.isFinite(ref) && ref > 1e9) out.ref = ref;
         if (typeof player.isAtLiveHead === 'function') out.at_live = !!player.isAtLiveHead();
       }
     } catch (_) {
       out.ref = null; // any failure means "no reading"
+    }
+    // Other position readings (read-only getters), to find a shared timeline for
+    // recordings. Debug page only; kept apart so a failure here can't affect `ref`.
+    try {
+      const player = findPlayer();
+      if (player) {
+        const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? +v.toFixed(2) : String(v));
+        if (typeof player.getCurrentTime === 'function') out.raw.playerTime = num(player.getCurrentTime());
+        if (typeof player.getDuration === 'function') out.raw.playerDuration = num(player.getDuration());
+        if (typeof player.getProgressState === 'function') {
+          const p = player.getProgressState() || {};
+          out.raw.progress = {};
+          for (const k of Object.keys(p)) if (typeof p[k] !== 'object' || p[k] === null) out.raw.progress[k] = num(p[k]);
+        }
+        if (typeof player.getVideoData === 'function') {
+          const d = player.getVideoData() || {};
+          out.raw.videoId = d.video_id; out.raw.isLive = d.isLive;
+        }
+      }
+    } catch (e) {
+      out.raw.error = String(e);
     }
     return out;
   }
