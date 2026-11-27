@@ -8,6 +8,7 @@ Ideas to build later. Nothing here is built unless its status says so. When one 
 | 3 | [Add trivia questions from a phone](#3-add-trivia-questions-from-a-phone) | Idea, needs a spec decision | 2026-10-24 |
 | 5 | [Test the overlay without a live stream](#5-test-the-overlay-without-a-live-stream) | Planned, answers in | 2026-10-25 |
 | 6 | [Uncover button on the cover](#6-uncover-button-on-the-cover) | Planned, answers in | 2026-10-25 |
+| 7 | [Fast-forward through breaks when far behind](#7-fast-forward-through-breaks-when-far-behind) | Planned, answers in | 2026-10-25 |
 
 ---
 
@@ -121,3 +122,67 @@ Ideas to build later. Nothing here is built unless its status says so. When one 
 2. Shown on **all covers** (break, manual, label).
 3. Appears **on mouse movement**, fades after ~3 s idle.
 4. Fast-forwarding under the curtain with YouTube TV's keys: **not pursued**.
+
+---
+
+## 7. Fast-forward through breaks when far behind
+
+**Goal:** when the TV is watching a recording, or is more than 45 min behind, jump over each break instead of covering it. The TV lands where the curtain would have been opening (a few seconds before the game is back), and a faint **» » » »** shows in the bottom-right corner for 2 s so you know it skipped.
+
+**Conflicts with the spec:** SPEC §1 is a hard rule: "Never skip, block, seek past, or speed up ads ... never call the YouTube player's `seekTo`, `seekBy` ...". `page-probe.js` and `content.js` both say they never seek, README line 1 says "Never skips ads", and §8 lists "skipping or seeking past ads" as a non-goal. Idea 6 also leans on "the extension never seeks". All of these must be reworded to: *never seeks during live events; during replays (a recording, or 45+ min behind live) it may seek forward over a break whose end is known*. Covering stays exactly as it is everywhere else.
+
+**When it fast-forwards** (all must hold, checked every 250 ms tick like the cover decision):
+- Cover mode, running, server healthy, a fresh `ref` (same gates as covering).
+- The TV is **far behind**: `now - ref - 20 s` (broadcast latency, SPEC §3) ≥ **45 min**. This needs no detector. (A chosen, lined-up recording counts as a replay without this test; see Recordings.) As each skip uses up lead, the TV eventually drops under 45 min and goes back to normal covering.
+- The break is **closed** (end known). Open breaks are never skipped; they cover as today.
+- `start ≤ ref < land - 1 s`, where `land = end - FF_LAND_S` (default 4 s: the middle of today's curtain opening, which runs from `end - 6.5` to `end - 1.5`).
+
+**How it skips:**
+- A new MAIN-world script `page-seek.js` (tv.youtube.com only), separate from `page-probe.js` so the probe stays read-only. It listens for a `kas-seek` event with a `delta` in seconds and calls `player.seekTo(player.getCurrentTime() + delta, true)`. `getCurrentTime()` (stream time) moves 1:1 with `ref` (SPEC §3), so `delta = land - ref`. Forward only: it refuses `delta ≤ 0` or more than 15 min.
+- `content.js` mutes the moment it sends the seek and keeps the sound off until `end - END_EARLY`, like the curtain does today, so the 2-4 s of ad tail after landing is silent. No curtain: the picture is visible the whole time.
+- After landing, `ref` sits in `[land - 1, end)`: too late to seek again and outside the cover rule for skippable breaks, so nothing covers. Rewinding into a skipped break and playing skips it again (no "suppressed" list needed).
+- **Check it worked:** if 3 s after the seek `ref` is not within 2 s of `land`, send one correcting seek; if that also misses, give up on skipping that break and cover it normally (e.g. a recording that doesn't allow fast forward). Log each skip with `debug` on.
+- Breaks longer than the 180 s cap are skipped whole, so their tail no longer leaks.
+- YouTube TV may flash its own seek bar or a spinner during the jump; a frame of the ad may show before the jump lands.
+
+**The » » » » badge:** its own small host element (shadow DOM, like the overlay), placed with `overlayParent()` so it shows in fullscreen. Bottom-right, ~4% in from the edges, white chevrons at ~70% opacity with a soft shadow on a faint dark pill, fades in, holds, fades out over 2 s total. Never blocks clicks (`pointer-events: none`).
+
+**Server:** for the long-pause case, nothing changes: the breaks are already in `/tv/sync`. Optional: show `FF` in the status line while the TV is far behind.
+
+**Recordings (phase 2).** A recording most likely does **not** report the original broadcast time through `getMediaReferenceTime()` (user's expectation, 2026-10-26), so its breaks can't be matched by `ref` directly. Instead breaks are placed in the recording by their **offset into the program** (program time), plus where the program starts in the recording, set once per recording with a line-up step.
+
+*Still to check on a real recording* (read-only console snippet `kas()`, see below), to choose the recording clock and its zero:
+1. Its URL (`/watch/<id>?...`): stable each time the same recording is opened? (Used to remember which airing it is.)
+2. Which player value counts the recording's position: `getCurrentTime()`, `video.currentTime`, or `getMediaReferenceTime()`, and what each reads at the very start of the recording. The one used must rise 1:1 with play and by the seek amount on a seek, and hold still while paused.
+3. Does the recording keep the broadcast's own breaks, or does YouTube TV swap in its own labeled ads (nothing to skip; label detection covers them)?
+4. Does seeking forward work on it?
+
+`kas = () => { const p = document.querySelector('.html5-video-player') || document.querySelector('#movie_player'); const v = [...document.querySelectorAll('video')].sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0]; const r = p.getMediaReferenceTime(); return { path: location.pathname + location.search, ref: r, clock: new Date(r * 1000).toLocaleString(), atLive: p.isAtLiveHead && p.isAtLiveHead(), stream: p.getCurrentTime(), duration: p.getDuration && p.getDuration(), videoTime: v && v.currentTime, title: p.getVideoData && p.getVideoData().title }; }` (Console context **top**.)
+
+**Picking the recording (TV popup, cover mode).** A **Replay of** dropdown under the fast-forward checkbox, filled from the programs in `kid-ad-shield.db` (the same list as the review page's `GET /api/programs`). Each entry is one airing, grouped by program and newest first, e.g. `NBC SNF · Sun Oct 19 · 7 breaks`, because one program airs every week and each airing has its own breaks. Airings with no finished breaks are left out. The first entry, **Live (none)**, is today's behavior and the default.
+- The choice is tied to the **recording's URL** (the tab's path when chosen) and saved on the airing in the DB (`airings.replay_path`). On any other page, including the live channel, it is ignored, so a choice left over can never touch live covering. Opening the same recording again picks its airing automatically.
+- With a replay airing, `/tv/sync` sends the airing id and `pos` (seconds since the recording's start). The server reads that airing's finished breaks from the DB (the in-memory list keeps only the last 6 h, `KEEP_S`) and returns them **as recording positions**: `lead_in + program time` (below), each marked `replay: true`. `content.js` then covers and fast-forwards with the same logic, using `pos` in place of `ref`.
+- A chosen recording counts as a replay without the 45-min test (its clock isn't broadcast time, so `now - ref` means nothing there). Live breaks still need the 45-min test.
+- The popup shows the choice with a **Clear** link, and its status says `Replay: NBC SNF · Sun Oct 19 · lined up` (or `· not lined up`).
+
+**Lining up: breaks as offsets into the program.** A recording is lined up with **offsets**, not broadcast times (user, 2026-10-26).
+- Each break's offset is its **program time**: seconds from the airing's **Program started at** (`break start_ref - airing start_ref`), the same `1:05:03` the review page shows. Not stored as a new column: the DB keeps the broadcast `start_ref`/`end_ref` (live covering needs them), and the offsets are worked out from them, so they can't drift apart.
+- Per recording, one more number: **`lead_in`** = how far into the recording the program starts (YouTube TV's padding before it, e.g. 47 s). Stored on the airing (`airings.replay_lead_in_s`, plus `replay_lined_up`). Then a break sits at **recording position = `lead_in` + its program time**, which you can check by eye on the recording's own scrubber against the review page.
+- **First guess:** `lead_in = 0` (the recording starts when the program starts). Only good enough for the curtain.
+- **Break starts now** button in the TV popup (shown only with a replay airing): pause on the first frame of any commercial break and press it. The server finds the airing's break whose recording position (`lead_in` + program time) is nearest to `pos` (within ±10 min; refuses if none, or if two are about equally near), sets `lead_in = pos - that break's program time`, and saves `lined_up`. Pressing it again at another break re-lines it up. Once per recording, since it's saved. The popup then says e.g. `Lined up: the program starts 0:47 into the recording`.
+- **Editing Program started at** on the review page moves every program time by the same amount, so the server moves a lined-up recording's `lead_in` by that amount too and it stays lined up.
+- **Until lined up, breaks on a recording get the curtain, never a fast-forward** (a wrong `lead_in` could skip game instead of ad). After the line-up they fast-forward like any replay break.
+
+**Phases:**
+1. `page-seek.js`, skip logic and badge for the far-behind case. Test in the harness (fake player whose `seekTo` moves `ref`) on a scratch server copy, then live with `--fake-break` and a TV paused 45+ min (or temporarily lower the threshold for the live check).
+2. Recordings: the `kas()` check above, then the **Replay of** dropdown, the DB lookup, the offset and **Break starts now**.
+3. README (Behavior notes, Controls) and SPEC (§1, §5.3, §8).
+
+**Decisions** (2026-10-25):
+1. Spec rule becomes: **never seek during live events; seeking is OK during replays.** A replay = a recording, or the TV 45+ min behind live; anything closer to live is a live event.
+2. Land **4 s before the break end**.
+3. "Far behind" = **45+ min behind live** (`now - ref - 20 s`), no detector needed.
+4. **Popup checkbox, on by default** (cover mode): "Fast-forward through breaks in replays (45+ min behind)".
+5. For a recording, **the TV popup asks which program (airing) from the recorded list** it is.
+6. A recording is lined up with **offsets**: each break at its program time (offset from Program started at), plus one stored `lead_in` per recording (where the program starts in it), set with a **Break starts now** button (2026-10-26).
+7. On a recording, **curtain until lined up**, fast-forward after (2026-10-26).

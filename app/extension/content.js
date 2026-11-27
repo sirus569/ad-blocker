@@ -81,7 +81,9 @@
   let labelDismissed = false; // user pressed Uncover now on a labeled ad: stay off until the label goes
   let breakCoverStart = 0;    // when that cover began (ms)
   let moonTotal = null;       // s from that cover's start to its uncover, once the end is known
-  const suppressed = new Set(); // break ids that hit MAX_COVER_S: never re-cover
+  let breakCoverPart = null;  // start of the part of that break the cover's cap is counting
+  const suppressed = new Set(); // break ids the user uncovered: never re-cover
+  const cappedParts = new Set(); // `${id}@${part start}` that hit MAX_COVER_S: never re-cover
 
   const log = (...args) => { if (settings.debug) console.log('[Kid Ad Shield]', ...args); };
 
@@ -766,11 +768,23 @@
   // Seconds until the cover for break `b` will lift: the break's known end, or
   // the MAX_COVER_S cap, whichever comes first. Without a known end only the cap
   // is certain.
+  // A break the server joined (parts) restarts the cap at each later part, as if
+  // the parts were still separate breaks.
   function secondsUntilUncover(b) {
     const capLeft = MAX_COVER_S - (performance.now() - breakCoverStart) / 1000;
     const ref = currentRef();
-    if (b.end == null || ref == null) return capLeft;
-    return Math.min(b.end - END_EARLY - ref, capLeft);
+    if (ref == null) return capLeft;
+    let capAt = ref + capLeft;
+    for (const p of b.parts || []) if (p > ref && p <= capAt) capAt = p + MAX_COVER_S;
+    if (b.end == null) return capAt - ref;
+    return Math.min(b.end - END_EARLY, capAt) - ref;
+  }
+
+  // The start of the part of break `b` that content position `ref` is in.
+  function partStart(b, ref) {
+    let s = b.start;
+    for (const p of b.parts || []) if (p <= ref && p > s) s = p;
+    return s;
   }
 
   // Countdown for the moon: "Back soon" while the end is open, else the seconds
@@ -963,7 +977,7 @@
     const ref = currentRef();
     if (ref == null || breaksChannel !== channelId()) return null;
     for (const b of breaks) {
-      if (suppressed.has(b.id)) continue;
+      if (suppressed.has(b.id) || cappedParts.has(`${b.id}@${partStart(b, ref)}`)) continue;
       const started = ref >= b.start + START_DELAY;
       // Open break: end not known yet. Only trust it while the detector is alive.
       const inside = b.end == null ? (started && detectorAlive)
@@ -1016,9 +1030,14 @@
       let hit = breakHit();
       if (hit) {
         const now = performance.now();
-        if (breakCoverId !== hit.id) { breakCoverId = hit.id; breakCoverStart = now; moonTotal = null; }
-        else if (now - breakCoverStart >= MAX_COVER_S * 1000) {
-          suppressed.add(hit.id); // covered too long: give up on this break for good
+        const r = currentRef();
+        const part = r != null ? partStart(hit, r) : breakCoverId === hit.id ? breakCoverPart : hit.start;
+        if (breakCoverId !== hit.id) {
+          breakCoverId = hit.id; breakCoverPart = part; breakCoverStart = now; moonTotal = null;
+        } else if (part !== breakCoverPart) {
+          breakCoverPart = part; breakCoverStart = now; // a later part of a joined break: its own cap
+        } else if (now - breakCoverStart >= MAX_COVER_S * 1000) {
+          cappedParts.add(`${hit.id}@${part}`); // covered too long: give up on this part for good
           log(`break ${hit.id} hit the ${MAX_COVER_S}s cap; uncovering`);
           hit = null;
         }

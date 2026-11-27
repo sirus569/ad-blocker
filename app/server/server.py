@@ -49,6 +49,7 @@ HEARTBEAT_S = 3       # status line marks a part x when older than this
 KEEP_S = 6 * 3600     # drop breaks starting more than this far behind the newest ref
 OPEN_MAX_S = 240      # discard an open break once the detector is this far past its start
 SYNC_WINDOW_S = 60    # /tv/sync leaves out breaks that ended this long before the TV's ref
+JOIN_GAP_S = 10       # logo back this long or less between two breaks: the TV covers them as one
 STATUS_EVERY_S = 5
 MAX_BODY = 256 * 1024   # a logo template is up to ~50 KB of JSON
 
@@ -174,6 +175,35 @@ def list_templates():
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return {'ok': True, 'templates': out}
+
+
+def join_reason(a, b):
+    """Why the TV should cover break `b` as part of `a`, the finished break just
+    before it, or None. All rules for joining live here, so later ones (e.g. a
+    halftime rule) can be added without touching the rest of the sync."""
+    gap = b['start_ref'] - a['end_ref']
+    if gap < 0:             # the detector reset its segment mid-break
+        return 'logo never came back: detector reset'
+    if gap <= JOIN_GAP_S:
+        return f'logo back only {gap:.0f}s'
+    return None
+
+
+def tv_breaks(breaks):
+    """One channel's breaks (sorted by start) grouped into the breaks the TV covers.
+    A group keeps its first break's id and start, takes its last break's end (None
+    while that one is open), and lists every part's start. The stored breaks are
+    never changed: this is only how the TV sees them."""
+    out = []
+    for b in breaks:
+        g = out[-1] if out else None
+        if g and g['end_ref'] is not None and join_reason(g, b):
+            g['end_ref'] = None if b['end_ref'] is None else max(g['end_ref'], b['end_ref'])
+            g['parts'].append(b['start_ref'])
+        else:
+            out.append({'id': b['id'], 'start_ref': b['start_ref'], 'end_ref': b['end_ref'],
+                        'parts': [b['start_ref']]})
+    return out
 
 
 def program_name(raw, channel):
@@ -304,6 +334,23 @@ class State:
                     f"broadcast clock {clock(b['start_ref'])} - {clock(b['end_ref'])})\n")
         self.append(self.break_log, line)
 
+    def log_join(self, b):
+        """If the TV will cover the newly opened break `b` together with the one
+        before it, say so (console, and the break log for real breaks)."""
+        chan = sorted((x for x in self.breaks.values() if x['channel'] == b['channel']),
+                      key=lambda x: x['start_ref'])
+        i = chan.index(b)
+        prev = chan[i - 1] if i else None
+        why = prev and prev['end_ref'] is not None and join_reason(prev, b)
+        if not why:
+            return
+        tv_id = next(g['id'] for g in tv_breaks(chan[:i + 1]) if b['start_ref'] in g['parts'])
+        line = f"break {b['id']}  joined to break {prev['id']}, the TV covers them as break {tv_id} ({why})"
+        print(f"[break] JOIN  {line}", flush=True)
+        if not b.get('fake'):
+            stamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.append(self.break_log, f"{stamp}  ch={b['channel']}  {line}\n")
+
     def trace(self, d):
         """Per-second logo scores from the detector: [ref, score, present] rows."""
         ch, rows = d.get('channel'), d.get('rows')
@@ -366,6 +413,7 @@ class State:
                                 'confirmed_at': time.time(), 'fake': True}
             self.next_id += 1
             print(f"[fake] break ch={ch} {clock(start)} -> {clock(end) if end else 'open'}")
+            self.log_join(self.breaks[key])
         self.pending_fake = []
 
     # ---- endpoints ----
@@ -418,6 +466,7 @@ class State:
                 print(f"[break] OPEN  id={b['id']} ch={ch} start {clock(start)} (ref {start:.1f})")
                 if not b.get('fake'):
                     self.log_break(b, closed=False)
+                self.log_join(b)
             elif end is not None and was_open:
                 print(f"[break] CLOSE id={b['id']} ch={ch} {clock(start)} -> {clock(end)} "
                       f"({end - start:.0f}s)")
@@ -439,13 +488,14 @@ class State:
             out = []
             if not self.log_only:
                 off = self.offsets.get(ch, 0.0)
-                for b in sorted(self.breaks.values(), key=lambda x: x['start_ref']):
-                    if b['channel'] != ch:
-                        continue
-                    end = None if b['end_ref'] is None else b['end_ref'] + off
+                chan = sorted((b for b in self.breaks.values() if b['channel'] == ch),
+                              key=lambda x: x['start_ref'])
+                for g in tv_breaks(chan):
+                    end = None if g['end_ref'] is None else g['end_ref'] + off
                     if end is not None and ref is not None and end <= ref - SYNC_WINDOW_S:
                         continue
-                    out.append({'id': b['id'], 'start': b['start_ref'] + off, 'end': end})
+                    out.append({'id': g['id'], 'start': g['start_ref'] + off, 'end': end,
+                                'parts': [p + off for p in g['parts']]})
         return {'ok': True, 'detector_alive': alive, 'breaks': out}
 
     def status_line(self):
